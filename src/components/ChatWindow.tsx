@@ -70,7 +70,7 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
   const rowVirtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: useCallback(() => 60, []), // Estimate each message height
+    estimateSize: () => 60, // Estimate each message height
     overscan: 5, // Number of items to render outside of the visible area
   });
 
