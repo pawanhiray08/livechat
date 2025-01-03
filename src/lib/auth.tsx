@@ -101,19 +101,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const result = await signInWithPopup(auth, provider);
       const user = result.user;
 
-      // Save user data to Firestore
-      await setDoc(
-        doc(db, 'users', user.uid),
-        {
-          uid: user.uid,
-          email: user.email,
-          displayName: user.displayName,
-          photoURL: user.photoURL,
-          online: true,
-          lastSeen: serverTimestamp(),
-        },
-        { merge: true }
-      );
+      // Create or update user document with all required fields
+      const userDocRef = doc(db, 'users', user.uid);
+      await setDoc(userDocRef, {
+        uid: user.uid,
+        email: user.email,
+        displayName: user.displayName,
+        photoURL: user.photoURL,
+        online: true,
+        lastSeen: serverTimestamp(),
+      }, { merge: true });
+
     } catch (error) {
       console.error('Error signing in with Google:', error);
     }
