@@ -33,6 +33,7 @@ export default function ChatSidebar({
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Query chats where the current user is a participant
     const chatsRef = collection(db, 'chats');
     const q = query(
       chatsRef,
@@ -40,27 +41,36 @@ export default function ChatSidebar({
       orderBy('lastMessageTime', 'desc')
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const chatList: ChatWithId[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        const otherParticipantId = data.participants.find(
-          (id: string) => id !== currentUser.uid
-        );
-        const otherParticipant = data.participantDetails[otherParticipantId];
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const chatList: ChatWithId[] = [];
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          // Find the other participant
+          const otherParticipantId = data.participants.find(
+            (id: string) => id !== currentUser.uid
+          );
 
-        chatList.push({
-          id: doc.id,
-          participants: data.participants,
-          participantDetails: data.participantDetails,
-          createdAt: (data.createdAt as Timestamp).toDate(),
-          lastMessageTime: (data.lastMessageTime as Timestamp).toDate(),
-          lastMessage: data.lastMessage,
+          if (otherParticipantId && data.participantDetails) {
+            chatList.push({
+              id: doc.id,
+              participants: data.participants,
+              participantDetails: data.participantDetails,
+              createdAt: data.createdAt ? (data.createdAt as Timestamp).toDate() : new Date(),
+              lastMessageTime: data.lastMessageTime ? (data.lastMessageTime as Timestamp).toDate() : new Date(),
+              lastMessage: data.lastMessage || null,
+            });
+          }
         });
-      });
-      setChats(chatList);
-      setLoading(false);
-    });
+        setChats(chatList);
+        setLoading(false);
+      },
+      (error) => {
+        console.error('Error fetching chats:', error);
+        setLoading(false);
+      }
+    );
 
     return () => unsubscribe();
   }, [currentUser.uid]);
@@ -73,59 +83,65 @@ export default function ChatSidebar({
     );
   }
 
+  if (chats.length === 0) {
+    return (
+      <div className="text-center py-4 text-gray-500">
+        No chats yet. Start a new chat by clicking "Show Users"
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-2">
-      {chats.length === 0 ? (
-        <div className="text-gray-500 text-center py-4">No chats yet</div>
-      ) : (
-        chats.map((chat) => {
-          const otherParticipantId = chat.participants.find(
-            (id) => id !== currentUser.uid
-          )!;
-          const otherParticipant = chat.participantDetails[otherParticipantId];
+      {chats.map((chat) => {
+        const otherParticipantId = chat.participants.find(
+          (id) => id !== currentUser.uid
+        )!;
+        const otherParticipant = chat.participantDetails[otherParticipantId];
 
-          return (
-            <button
-              key={chat.id}
-              onClick={() => onChatSelect(chat.id)}
-              className={`w-full text-left p-3 rounded-lg transition-colors ${
-                selectedChatId === chat.id
-                  ? 'bg-blue-50'
-                  : 'hover:bg-gray-50'
-              }`}
-            >
-              <div className="flex items-center space-x-3">
-                <UserAvatar
-                  user={{
-                    displayName: otherParticipant.displayName,
-                    photoURL: otherParticipant.photoURL,
-                    email: otherParticipant.email,
-                  }}
-                  className="h-10 w-10"
-                />
-                <div className="flex-1 min-w-0">
+        return (
+          <button
+            key={chat.id}
+            onClick={() => onChatSelect(chat.id)}
+            className={`w-full text-left p-3 rounded-lg transition-colors ${
+              selectedChatId === chat.id
+                ? 'bg-blue-50'
+                : 'hover:bg-gray-50'
+            }`}
+          >
+            <div className="flex items-center space-x-3">
+              <UserAvatar
+                user={{
+                  displayName: otherParticipant.displayName,
+                  photoURL: otherParticipant.photoURL,
+                  email: otherParticipant.email,
+                }}
+                className="h-10 w-10"
+              />
+              <div className="flex-1 min-w-0">
+                <div className="flex justify-between items-baseline">
                   <p className="font-medium text-sm truncate">
                     {otherParticipant.displayName}
                   </p>
-                  {chat.lastMessage && (
-                    <p className="text-xs text-gray-500 truncate">
-                      {chat.lastMessage}
-                    </p>
+                  {chat.lastMessageTime && (
+                    <span className="text-xs text-gray-400 ml-2">
+                      {new Date(chat.lastMessageTime).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </span>
                   )}
                 </div>
-                {chat.lastMessageTime && (
-                  <span className="text-xs text-gray-400">
-                    {new Date(chat.lastMessageTime).toLocaleTimeString([], {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </span>
+                {chat.lastMessage && (
+                  <p className="text-sm text-gray-500 truncate">
+                    {chat.lastMessage}
+                  </p>
                 )}
               </div>
-            </button>
-          );
-        })
-      )}
+            </div>
+          </button>
+        );
+      })}
     </div>
   );
 }
