@@ -58,22 +58,17 @@ export default function UserList({ currentUser }: UserListProps) {
   const checkExistingChat = async (currentUserId: string, otherUserId: string) => {
     const chatsRef = collection(db, 'chats');
     
-    // Check both possible participant arrangements
-    const q1 = query(
+    // Check if both users are participants in the same chat
+    const q = query(
       chatsRef,
-      where('participants', '==', [currentUserId, otherUserId])
-    );
-    const q2 = query(
-      chatsRef,
-      where('participants', '==', [otherUserId, currentUserId])
+      where('participants', 'array-contains', currentUserId)
     );
 
-    const [snapshot1, snapshot2] = await Promise.all([
-      getDocs(q1),
-      getDocs(q2)
-    ]);
-
-    return !snapshot1.empty || !snapshot2.empty;
+    const snapshot = await getDocs(q);
+    return snapshot.docs.some(doc => {
+      const participants = doc.data().participants;
+      return participants.includes(otherUserId);
+    });
   };
 
   const startChat = async (otherUser: ChatUser) => {
