@@ -17,6 +17,31 @@ export default function ChatLayout() {
   });
   const [showUsers, setShowUsers] = useState(false);
 
+  // Handle browser back button
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      // Add state to history when chat is selected
+      if (selectedChatId) {
+        window.history.pushState({ chatId: selectedChatId }, '');
+      }
+
+      // Handle popstate (back/forward button)
+      const handlePopState = (event: PopStateEvent) => {
+        event.preventDefault();
+        if (!event.state?.chatId) {
+          setSelectedChatId(null);
+        }
+      };
+
+      window.addEventListener('popstate', handlePopState);
+
+      // Cleanup
+      return () => {
+        window.removeEventListener('popstate', handlePopState);
+      };
+    }
+  }, [selectedChatId]);
+
   // Save selectedChatId to localStorage whenever it changes
   useEffect(() => {
     if (selectedChatId) {
@@ -30,6 +55,10 @@ export default function ChatLayout() {
 
   const handleBackToChats = () => {
     setSelectedChatId(null);
+    // Update browser history
+    if (typeof window !== 'undefined') {
+      window.history.back();
+    }
   };
 
   return (
@@ -56,13 +85,23 @@ export default function ChatLayout() {
               onChatCreated={(chatId) => {
                 setSelectedChatId(chatId);
                 setShowUsers(false);
+                // Add state to history when creating new chat
+                if (typeof window !== 'undefined') {
+                  window.history.pushState({ chatId }, '');
+                }
               }}
             />
           ) : (
             <ChatSidebar 
               currentUser={user} 
               selectedChatId={selectedChatId} 
-              onChatSelect={setSelectedChatId} 
+              onChatSelect={(chatId) => {
+                setSelectedChatId(chatId);
+                // Add state to history when selecting chat
+                if (typeof window !== 'undefined') {
+                  window.history.pushState({ chatId }, '');
+                }
+              }}
             />
           )}
         </div>
