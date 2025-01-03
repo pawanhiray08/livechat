@@ -13,6 +13,7 @@ import {
 import { db } from '@/lib/firebase';
 import UserAvatar from './UserAvatar';
 import { Chat } from '@/types';
+import { formatLastSeen } from '@/utils/time';
 
 interface ChatSidebarProps {
   currentUser: User;
@@ -59,6 +60,7 @@ export default function ChatSidebar({
               createdAt: data.createdAt ? (data.createdAt as Timestamp).toDate() : new Date(),
               lastMessageTime: data.lastMessageTime ? (data.lastMessageTime as Timestamp).toDate() : new Date(),
               lastMessage: data.lastMessage || '',
+              typingUsers: data.typingUsers || {},
             };
             console.log('Chat data:', chat); // Debug log
             chatList.push(chat);
@@ -119,7 +121,11 @@ export default function ChatSidebar({
                   email: otherParticipant.email,
                 }}
                 className="h-10 w-10"
-              />
+              >
+                {otherParticipant.online && (
+                  <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>
+                )}
+              </UserAvatar>
               <div className="flex-1 min-w-0">
                 <div className="flex justify-between items-baseline">
                   <p className="font-medium text-sm truncate">
@@ -134,11 +140,16 @@ export default function ChatSidebar({
                     </span>
                   )}
                 </div>
-                {chat.lastMessage && (
-                  <p className="text-sm text-gray-500 truncate">
-                    {chat.lastMessage}
-                  </p>
-                )}
+                <div className="flex justify-between items-baseline">
+                  {chat.lastMessage && (
+                    <p className="text-sm text-gray-500 truncate flex-1">
+                      {chat.lastMessage}
+                    </p>
+                  )}
+                  <span className="text-xs text-gray-400 ml-2">
+                    {formatLastSeen(otherParticipant.lastSeen ? new Date(otherParticipant.lastSeen) : null, otherParticipant.online)}
+                  </span>
+                </div>
               </div>
             </div>
           </button>

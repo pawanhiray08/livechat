@@ -8,7 +8,7 @@ import {
   signInWithPopup,
 } from 'firebase/auth';
 import { auth, db } from './firebase';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp, writeBatch, collection, query, where, getDocs } from 'firebase/firestore';
 
 interface AuthContextType {
   user: User | null;
@@ -44,28 +44,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }, { merge: true });
 
         // Set up presence system
-        const updatePresence = async () => {
-          await setDoc(userDocRef, {
-            online: false,
+        const updatePresence = async (online: boolean) => {
+          const batch = writeBatch(db);
+          
+          // Update user document
+          batch.update(userDocRef, {
+            online,
             lastSeen: serverTimestamp(),
-          }, { merge: true });
+          });
+
+          // Find all chats where user is a participant
+          const chatsRef = collection(db, 'chats');
+          const q = query(chatsRef, where('participants', 'array-contains', user.uid));
+          const chatDocs = await getDocs(q);
+
+          // Update user's online status in all chats
+          chatDocs.forEach((chatDoc) => {
+            const chatRef = doc(db, 'chats', chatDoc.id);
+            batch.update(chatRef, {
+              [`participantDetails.${user.uid}.online`]: online,
+              [`participantDetails.${user.uid}.lastSeen`]: serverTimestamp(),
+            });
+          });
+
+          // Commit all updates
+          await batch.commit();
         };
 
         // Update presence on page visibility change
         document.addEventListener('visibilitychange', async () => {
           if (document.visibilityState === 'hidden') {
-            await updatePresence();
+            await updatePresence(false);
           } else {
-            await setDoc(userDocRef, {
-              online: true,
-              lastSeen: serverTimestamp(),
-            }, { merge: true });
+            await updatePresence(true);
           }
         });
 
         // Update presence on beforeunload
         window.addEventListener('beforeunload', () => {
-          updatePresence();
+          updatePresence(false);
         });
       }
     });

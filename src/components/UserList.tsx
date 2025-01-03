@@ -66,6 +66,11 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
       const chatDoc = await getDoc(chatRef);
 
       if (!chatDoc.exists()) {
+        // Get current user details
+        const currentUserRef = doc(db, 'users', currentUser.uid);
+        const currentUserDoc = await getDoc(currentUserRef);
+        const currentUserData = currentUserDoc.data();
+
         // Create new chat
         await setDoc(chatRef, {
           participants: [currentUser.uid, otherUser.uid],
@@ -74,16 +79,21 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
               displayName: currentUser.displayName,
               photoURL: currentUser.photoURL,
               email: currentUser.email,
+              lastSeen: currentUserData?.lastSeen || null,
+              online: currentUserData?.online || false,
             },
             [otherUser.uid]: {
               displayName: otherUser.displayName,
               photoURL: otherUser.photoURL,
               email: otherUser.email,
+              lastSeen: otherUser.lastSeen || null,
+              online: otherUser.online || false,
             },
           },
           createdAt: serverTimestamp(),
           lastMessageTime: serverTimestamp(),
           lastMessage: '',
+          typingUsers: {},
         });
       }
 
