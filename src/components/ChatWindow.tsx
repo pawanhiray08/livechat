@@ -35,6 +35,7 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
   const [error, setError] = useState('');
   const [chat, setChat] = useState<Chat | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout>();
 
   // Fetch chat details
   useEffect(() => {
@@ -50,6 +51,7 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
             createdAt: (data.createdAt as Timestamp).toDate(),
             lastMessageTime: (data.lastMessageTime as Timestamp).toDate(),
             lastMessage: data.lastMessage,
+            typingUsers: data.typingUsers,
           });
         }
       } catch (error) {
@@ -86,7 +88,38 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
     return () => unsubscribe();
   }, [chatId]);
 
-  const sendMessage = async (e: React.FormEvent) => {
+  // Handle typing status
+  const updateTypingStatus = async (isTyping: boolean) => {
+    if (!chatId) return;
+    
+    const chatRef = doc(db, 'chats', chatId);
+    try {
+      await updateDoc(chatRef, {
+        [`typingUsers.${currentUser.uid}`]: isTyping
+      });
+    } catch (error) {
+      console.error('Error updating typing status:', error);
+    }
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setNewMessage(e.target.value);
+    
+    // Clear existing timeout
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+
+    // Set typing status to true
+    updateTypingStatus(true);
+
+    // Set a new timeout to clear typing status after 2 seconds of no typing
+    typingTimeoutRef.current = setTimeout(() => {
+      updateTypingStatus(false);
+    }, 2000);
+  };
+
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim()) return;
 
@@ -113,6 +146,16 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
     }
   };
 
+  // Cleanup typing status when component unmounts
+  useEffect(() => {
+    return () => {
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      updateTypingStatus(false);
+    };
+  }, []);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -135,7 +178,7 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
   const otherParticipant = chat.participantDetails[otherParticipantId];
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-gray-50">
       <div className="flex items-center p-4 border-b">
         <UserAvatar
           user={{
@@ -151,7 +194,7 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={messagesEndRef}>
         {messages.map((message) => {
           const isCurrentUser = message.senderId === currentUser.uid;
           const sender = isCurrentUser
@@ -195,16 +238,38 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
             </div>
           );
         })}
+        {chat?.typingUsers && Object.entries(chat.typingUsers).map(([userId, isTyping]) => {
+          if (isTyping && userId !== currentUser.uid) {
+            const userDetails = chat.participantDetails[userId];
+            return (
+              <div key={userId} className="flex items-center space-x-2 text-gray-500 text-sm mb-2">
+                <UserAvatar user={{ 
+                  photoURL: userDetails.photoURL,
+                  displayName: userDetails.displayName,
+                  email: userDetails.email
+                }} />
+                <span>{userDetails.displayName} is typing...</span>
+                <div className="typing-indicator">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+              </div>
+            );
+          }
+          return null;
+        })}
         <div ref={messagesEndRef} />
       </div>
 
-      <form onSubmit={sendMessage} className="p-4 border-t">
+      <form onSubmit={handleSendMessage} className="p-4 border-t">
         {error && <p className="text-red-500 text-sm mb-2">{error}</p>}
         <div className="flex space-x-4">
           <input
             type="text"
             value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
+            onChange={handleInputChange}
+            onBlur={() => updateTypingStatus(false)}
             placeholder="Type a message..."
             className="flex-1 rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:border-blue-500"
           />
