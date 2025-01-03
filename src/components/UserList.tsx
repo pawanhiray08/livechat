@@ -83,14 +83,14 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
           participants: [currentUser.uid, otherUser.uid],
           participantDetails: {
             [currentUser.uid]: {
-              displayName: currentUser.displayName,
+              displayName: currentUser.displayName || 'Unknown User',
               photoURL: currentUser.photoURL,
               email: currentUser.email,
-              lastSeen: currentUserData?.lastSeen || null,
-              online: currentUserData?.online || false,
+              lastSeen: currentUserData?.lastSeen || serverTimestamp(),
+              online: currentUserData?.online || true,
             },
             [otherUser.uid]: {
-              displayName: otherUser.displayName,
+              displayName: otherUser.displayName || 'Unknown User',
               photoURL: otherUser.photoURL,
               email: otherUser.email,
               lastSeen: otherUser.lastSeen || null,

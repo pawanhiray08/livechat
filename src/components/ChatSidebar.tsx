@@ -145,8 +145,13 @@ export default function ChatSidebar({
         const chat = chats[virtualRow.index];
         const otherParticipantId = chat.participants.find(
           (id) => id !== currentUser.uid
-        )!;
-        const otherParticipant = chat.participantDetails[otherParticipantId];
+        );
+        const otherParticipant = otherParticipantId ? chat.participantDetails[otherParticipantId] : null;
+
+        if (!otherParticipant) {
+          console.error('Could not find other participant details for chat:', chat.id);
+          return null;
+        }
 
         return (
           <button
@@ -161,9 +166,9 @@ export default function ChatSidebar({
             <div className="flex items-center space-x-3">
               <UserAvatar
                 user={{
-                  displayName: otherParticipant.displayName,
+                  displayName: otherParticipant.displayName || 'Unknown User',
                   photoURL: otherParticipant.photoURL,
-                  email: otherParticipant.email,
+                  email: otherParticipant.email || '',
                 }}
                 className="h-10 w-10"
               >
@@ -174,7 +179,7 @@ export default function ChatSidebar({
               <div className="flex-1 min-w-0">
                 <div className="flex justify-between items-baseline">
                   <p className="font-medium text-sm truncate">
-                    {otherParticipant.displayName}
+                    {otherParticipant.displayName || 'Unknown User'}
                   </p>
                   {chat.lastMessageTime && (
                     <span className="text-xs text-gray-400 ml-2">
@@ -186,16 +191,18 @@ export default function ChatSidebar({
                   )}
                 </div>
                 <div className="flex justify-between items-baseline">
-                  {chat.lastMessage ? (
-                    <p className="text-sm text-gray-500 truncate flex-1">
-                      {chat.lastMessage}
-                    </p>
-                  ) : (
-                    <p className="text-sm text-gray-400 italic">
-                      No messages yet
-                    </p>
-                  )}
-                  <span className="text-xs text-gray-400 ml-2">
+                  <div className="flex-1 min-w-0">
+                    {chat.lastMessage ? (
+                      <p className="text-sm text-gray-500 truncate">
+                        {chat.lastMessage}
+                      </p>
+                    ) : (
+                      <p className="text-sm text-gray-400 italic">
+                        No messages yet
+                      </p>
+                    )}
+                  </div>
+                  <span className="text-xs text-gray-400 ml-2 whitespace-nowrap">
                     {formatLastSeen(
                       otherParticipant.lastSeen ? new Date(otherParticipant.lastSeen) : null,
                       otherParticipant.online
