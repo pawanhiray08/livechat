@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/lib/auth';
 import ChatSidebar from './ChatSidebar';
 import ChatWindow from './ChatWindow';
@@ -42,13 +42,13 @@ export default function ChatLayout() {
     }
   }, [selectedChatId]);
 
-  const handleBackToChats = () => {
+  const handleBackToChats = useCallback(() => {
     setSelectedChatId(null);
     setShowUsers(false);
     if (typeof window !== 'undefined') {
-      window.history.pushState(null, '');
+      window.history.pushState(null, '', '/');
     }
-  };
+  }, []);
 
   if (!user) {
     return null;
@@ -71,7 +71,7 @@ export default function ChatLayout() {
         </div>
       )}
 
-      {/* Sidebar - hidden on mobile when chat is selected */}
+      {/* Sidebar */}
       <div 
         className={`${
           selectedChatId ? 'hidden md:block' : 'block'
@@ -98,7 +98,7 @@ export default function ChatLayout() {
                   setSelectedChatId(chatId);
                   setShowUsers(false);
                   if (typeof window !== 'undefined') {
-                    window.history.pushState({ chatId }, '');
+                    window.history.pushState({ chatId }, '', `/chat/${chatId}`);
                   }
                 }}
               />
@@ -109,7 +109,7 @@ export default function ChatLayout() {
                 onChatSelect={(chatId) => {
                   setSelectedChatId(chatId);
                   if (typeof window !== 'undefined') {
-                    window.history.pushState({ chatId }, '');
+                    window.history.pushState({ chatId }, '', `/chat/${chatId}`);
                   }
                 }}
               />
@@ -118,14 +118,39 @@ export default function ChatLayout() {
         </div>
       </div>
 
-      {/* Main chat area - full screen on mobile when chat is selected */}
+      {/* Main chat area */}
       <div 
         className={`${
           selectedChatId ? 'block' : 'hidden md:block'
         } flex-1 h-full ${selectedChatId ? 'md:pt-0 pt-14' : ''}`}
       >
         {selectedChatId ? (
-          <ChatWindow chatId={selectedChatId} currentUser={user} />
+          <div className="h-full flex flex-col">
+            {/* Desktop back button */}
+            <div className="hidden md:block bg-white border-b border-gray-200">
+              <button
+                onClick={handleBackToChats}
+                className="p-4 text-blue-500 hover:text-blue-600 flex items-center space-x-2"
+              >
+                <svg 
+                  xmlns="http://www.w3.org/2000/svg" 
+                  className="h-5 w-5" 
+                  viewBox="0 0 20 20" 
+                  fill="currentColor"
+                >
+                  <path 
+                    fillRule="evenodd" 
+                    d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" 
+                    clipRule="evenodd" 
+                  />
+                </svg>
+                <span>Back to Chats</span>
+              </button>
+            </div>
+            <div className="flex-1">
+              <ChatWindow chatId={selectedChatId} currentUser={user} />
+            </div>
+          </div>
         ) : (
           <div className="h-full flex items-center justify-center bg-gray-50">
             <div className="text-center">
