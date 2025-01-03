@@ -44,6 +44,7 @@ export default function NewChat({ currentUser }: NewChatProps) {
 
       if (querySnapshot.empty) {
         setError('User not found');
+        setLoading(false);
         return;
       }
 
@@ -55,15 +56,16 @@ export default function NewChat({ currentUser }: NewChatProps) {
         chatsRef,
         where('participants', 'array-contains', currentUser.uid)
       );
-      const chatSnapshot = await getDocs(chatQuery);
 
-      const existingChat = chatSnapshot.docs.find((doc) => {
-        const data = doc.data();
-        return data.participants.includes(otherUser.uid);
+      const chatSnapshot = await getDocs(chatQuery);
+      const existingChat = chatSnapshot.docs.some(doc => {
+        const chat = doc.data();
+        return chat.participants.includes(otherUser.uid);
       });
 
       if (existingChat) {
         setError('Chat already exists');
+        setLoading(false);
         return;
       }
 
@@ -74,7 +76,9 @@ export default function NewChat({ currentUser }: NewChatProps) {
         lastMessageTime: serverTimestamp(),
       });
 
+      // Clear form
       setEmail('');
+      setError('');
     } catch (error) {
       console.error('Error creating chat:', error);
       setError('Failed to create chat');
@@ -92,6 +96,7 @@ export default function NewChat({ currentUser }: NewChatProps) {
           onChange={(e) => setEmail(e.target.value)}
           placeholder="Enter email to start chat"
           className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+          disabled={loading}
         />
         <button
           type="submit"
@@ -101,7 +106,7 @@ export default function NewChat({ currentUser }: NewChatProps) {
           <PlusIcon className="h-5 w-5" />
         </button>
       </div>
-      {error && <p className="text-sm text-red-500">{error}</p>}
+      {error && <p className="text-red-500 text-sm">{error}</p>}
     </form>
   );
 }
