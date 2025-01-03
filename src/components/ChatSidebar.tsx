@@ -10,12 +10,34 @@ import {
   onSnapshot,
   Timestamp,
   limit,
+  getDoc,
+  updateDoc,
+  doc,
+  DocumentData,
+  QueryDocumentSnapshot,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import UserAvatar from './UserAvatar';
 import { Chat } from '@/types';
 import { formatLastSeen } from '@/utils/time';
 import { useVirtualizer } from '@tanstack/react-virtual';
+
+interface FirebaseUser {
+  uid: string;
+  displayName: string | null;
+  photoURL: string | null;
+  email: string | null;
+  lastSeen: Timestamp | null;
+  online: boolean;
+}
+
+interface FirestoreUser {
+  displayName: string | null;
+  photoURL: string | null;
+  email: string | null;
+  lastSeen: Timestamp | null;
+  online: boolean;
+}
 
 interface ChatSidebarProps {
   currentUser: User;
@@ -32,106 +54,123 @@ export default function ChatSidebar({
   selectedChatId,
   onChatSelect,
 }: ChatSidebarProps) {
-  const [chats, setChats] = useState<ChatWithId[]>([]);
+  const [chats, setChats] = useState<Chat[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
 
-  // Create virtualizer for chat list
   const rowVirtualizer = useVirtualizer({
     count: chats.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: useCallback(() => 80, []), // Estimate each chat item height
-    overscan: 5, // Number of items to render outside of the visible area
+    estimateSize: useCallback(() => 80, []),
+    overscan: 5,
   });
 
   useEffect(() => {
-    // Query chats where the current user is a participant
-    console.log('Fetching chats for user:', currentUser.uid);
+    if (!currentUser?.uid) return;
+
     const chatsRef = collection(db, 'chats');
     const q = query(
       chatsRef,
       where('participants', 'array-contains', currentUser.uid),
-      orderBy('lastMessageTime', 'desc'), // Sort by lastMessageTime to show recent chats first
-      limit(50)
+      orderBy('lastMessageTime', 'desc')
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      try {
-        console.log('Got chats snapshot, size:', snapshot.size);
-        const chatList: ChatWithId[] = [];
+    const unsubscribe = onSnapshot(
+      q,
+      async (docSnapshot) => {
+        console.log('Fetching chats...');
+        const chatList: Chat[] = [];
         const seenChats = new Set<string>();
 
-        snapshot.forEach((doc) => {
-          console.log('Processing chat doc:', doc.id, doc.data());
-          const data = doc.data();
+        for (const doc of docSnapshot.docs) {
+          const data = doc.data() as DocumentData;
+          console.log('Chat data:', data);
+
           const otherParticipantId = data.participants.find(
             (id: string) => id !== currentUser.uid
           );
 
-          // Show chats that either:
-          // 1. Have messages (lastMessage and lastMessageTime exist)
-          // 2. Are newly created (only have createdAt)
-          if (otherParticipantId && 
-              data.participantDetails && 
-              data.participantDetails[otherParticipantId] &&
-              !seenChats.has(doc.id)) {
-            seenChats.add(doc.id);
-            const chat = {
-              id: doc.id,
-              participants: data.participants,
-              participantDetails: data.participantDetails,
-              createdAt: data.createdAt ? (data.createdAt as Timestamp).toDate() : new Date(),
-              lastMessageTime: data.lastMessageTime ? (data.lastMessageTime as Timestamp).toDate() : null,
-              lastMessage: data.lastMessage || '',
-              typingUsers: data.typingUsers || {},
-            };
-            chatList.push(chat);
-          }
-        });
+          if (otherParticipantId && !seenChats.has(doc.id)) {
+            // Fetch participant details if not present
+            if (!data.participantDetails || !data.participantDetails[otherParticipantId]) {
+              try {
+                const userDocRef = doc(db, 'users', otherParticipantId);
+                const userDocSnapshot = await getDoc(userDocRef);
+                if (userDocSnapshot.exists()) {
+                  const userData = userDocSnapshot.data() as FirestoreUser;
+                  const typedUserData: FirebaseUser = {
+                    uid: otherParticipantId,
+                    displayName: userData.displayName || '',
+                    photoURL: userData.photoURL || '',
+                    email: userData.email || '',
+                    lastSeen: userData.lastSeen || null,
+                    online: userData.online || false
+                  };
+                  data.participantDetails = {
+                    ...data.participantDetails,
+                    [otherParticipantId]: typedUserData
+                  };
+                  // Update the chat document with participant details
+                  await updateDoc(doc(db, 'chats', doc.ref.id), {
+                    participantDetails: data.participantDetails,
+                  });
+                }
+              } catch (error) {
+                console.error('Error fetching participant details:', error);
+              }
+            }
 
-        // Sort chats: ones with messages first (by lastMessageTime), then new chats (by createdAt)
-        chatList.sort((a, b) => {
-          if (a.lastMessageTime && b.lastMessageTime) {
-            return b.lastMessageTime.getTime() - a.lastMessageTime.getTime();
+            if (data.participantDetails?.[otherParticipantId]) {
+              seenChats.add(doc.id);
+              const chat = {
+                id: doc.id,
+                participants: data.participants,
+                participantDetails: data.participantDetails,
+                lastMessage: data.lastMessage || '',
+                lastMessageTime: data.lastMessageTime ? (data.lastMessageTime as Timestamp).toDate() : null,
+                createdAt: data.createdAt ? (data.createdAt as Timestamp).toDate() : new Date(),
+                typingUsers: data.typingUsers || {},
+              };
+              chatList.push(chat);
+            }
           }
-          if (a.lastMessageTime) return -1;
-          if (b.lastMessageTime) return 1;
-          return b.createdAt.getTime() - a.createdAt.getTime();
-        });
+        }
 
         console.log('Final chat list:', chatList);
         setChats(chatList);
         setLoading(false);
-      } catch (error) {
-        console.error('Error processing chat data:', error);
+      },
+      (error) => {
+        console.error('Error fetching chats:', error);
+        setError('Failed to load chats');
         setLoading(false);
       }
-    }, (error) => {
-      console.error('Error in chat subscription:', error);
-      setLoading(false);
-    });
+    );
 
     return () => unsubscribe();
-  }, [currentUser.uid]);
+  }, [currentUser?.uid]);
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-4">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900" />
+      <div className="flex items-center justify-center h-full">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center text-red-500 p-4">
+        {error}
       </div>
     );
   }
 
   if (chats.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
-        <p className="text-gray-500 mb-4">No chats yet</p>
-        <button
-          onClick={() => document.querySelector<HTMLButtonElement>('[data-show-users]')?.click()}
-          className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors"
-        >
-          Start a New Chat
-        </button>
+      <div className="text-center text-gray-500 p-4">
+        No chats yet. Start a new conversation!
       </div>
     );
   }

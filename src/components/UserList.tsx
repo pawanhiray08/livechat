@@ -17,8 +17,16 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import UserAvatar from './UserAvatar';
-import { ChatUser } from '@/types';
 import { formatLastSeen } from '@/utils/time';
+
+interface ChatUser {
+  uid: string;
+  displayName: string | null;
+  photoURL: string | null;
+  email: string | null;
+  lastSeen: Date | null;
+  online: boolean;
+}
 
 interface UserListProps {
   currentUser: User;
@@ -28,31 +36,35 @@ interface UserListProps {
 export default function UserList({ currentUser, onChatCreated }: UserListProps) {
   const [users, setUsers] = useState<ChatUser[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<string>('');
 
   useEffect(() => {
     console.log('Current user:', currentUser.uid);
     const usersRef = collection(db, 'users');
-    const q = query(usersRef, where('uid', '!=', currentUser.uid));
-    console.log('Fetching users...');
+    const q = query(
+      usersRef, 
+      where('uid', '!=', currentUser.uid),
+      where('displayName', '!=', null)
+    );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       console.log('Got snapshot, docs count:', snapshot.size);
-      const userList: ChatUser[] = [];
-      snapshot.forEach((doc) => {
-        console.log('User doc:', doc.id, doc.data());
-        const data = doc.data();
-        if (data.uid && data.displayName) {  
-          userList.push({
+      const userList: ChatUser[] = snapshot.docs
+        .map(doc => {
+          const data = doc.data();
+          if (!data.uid || !data.displayName) return null;
+          
+          return {
             uid: data.uid,
-            displayName: data.displayName || 'Unknown User',
+            displayName: data.displayName || null,
             photoURL: data.photoURL || null,
-            email: data.email || '',
+            email: data.email || null,
             lastSeen: data.lastSeen ? (data.lastSeen as Timestamp).toDate() : null,
             online: data.online || false,
-          });
-        }
-      });
+          };
+        })
+        .filter((user): user is ChatUser => user !== null);
+
       console.log('Final user list:', userList);
       setUsers(userList);
       setLoading(false);

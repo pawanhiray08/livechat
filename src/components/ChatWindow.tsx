@@ -26,10 +26,16 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 interface Chat {
   id: string;
   participants: string[];
-  participantDetails: Record<string, any>;
+  participantDetails: Record<string, {
+    displayName: string | null;
+    photoURL: string | null;
+    email: string | null;
+    lastSeen: Timestamp | null;
+    online: boolean;
+  }>;
   createdAt: Date;
-  lastMessageTime: Date;
-  lastMessage: string;
+  lastMessageTime: Date | null;
+  lastMessage: string | null;
   typingUsers: Record<string, boolean>;
   draftMessages: Record<string, string>;
 }
@@ -132,7 +138,7 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
           participants: data.participants,
           participantDetails: data.participantDetails,
           createdAt: (data.createdAt as Timestamp).toDate(),
-          lastMessageTime: (data.lastMessageTime as Timestamp).toDate(),
+          lastMessageTime: (data.lastMessageTime as Timestamp)?.toDate(),
           lastMessage: data.lastMessage,
           typingUsers: data.typingUsers || {},
           draftMessages: data.draftMessages || {},
@@ -182,7 +188,12 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
 
   const scrollToBottom = useCallback(() => {
     if (parentRef.current) {
-      parentRef.current.scrollTop = parentRef.current.scrollHeight;
+      requestAnimationFrame(() => {
+        parentRef.current?.scrollTo({
+          top: parentRef.current.scrollHeight,
+          behavior: 'smooth'
+        });
+      });
     }
   }, []);
 
@@ -192,15 +203,18 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
       updateTypingStatus(true);
     }
     lastTypingTime.current = Date.now();
-    setTimeout(() => {
+    
+    const checkTypingTimeout = () => {
       const timeNow = Date.now();
       const timeDiff = timeNow - lastTypingTime.current;
       if (timeDiff >= TYPING_TIMER_LENGTH && isTyping) {
         setIsTyping(false);
         updateTypingStatus(false);
       }
-    }, TYPING_TIMER_LENGTH);
-  }, [isTyping]);
+    };
+
+    setTimeout(checkTypingTimeout, TYPING_TIMER_LENGTH);
+  }, [isTyping, updateTypingStatus]);
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
