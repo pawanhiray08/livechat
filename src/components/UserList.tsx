@@ -31,12 +31,16 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
   const [error, setError] = useState('');
 
   useEffect(() => {
+    console.log('Current user:', currentUser.uid);
     const usersRef = collection(db, 'users');
     const q = query(usersRef, where('uid', '!=', currentUser.uid));
+    console.log('Fetching users...');
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
+      console.log('Got snapshot, docs count:', snapshot.size);
       const userList: ChatUser[] = [];
       snapshot.forEach((doc) => {
+        console.log('User doc:', doc.id, doc.data());
         const data = doc.data();
         userList.push({
           uid: data.uid,
@@ -47,6 +51,7 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
           online: data.online || false,
         });
       });
+      console.log('Final user list:', userList);
       setUsers(userList);
       setLoading(false);
     }, (error) => {
@@ -106,38 +111,6 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
     }
   };
 
-  useEffect(() => {
-    const fetchExistingChats = async () => {
-      try {
-        const chatsRef = collection(db, 'chats');
-        const q = query(chatsRef, where('participants', 'array-contains', currentUser.uid));
-        const chatDocs = await getDocs(q);
-        
-        const existingChatPartners = new Set<string>();
-        chatDocs.forEach((doc) => {
-          const data = doc.data();
-          const otherParticipantId = data.participants.find(
-            (id: string) => id !== currentUser.uid
-          );
-          if (otherParticipantId) {
-            existingChatPartners.add(otherParticipantId);
-          }
-        });
-
-        // Filter users list to exclude those with existing chats
-        setUsers(prevUsers => 
-          prevUsers.filter(user => !existingChatPartners.has(user.uid))
-        );
-      } catch (error) {
-        console.error('Error fetching existing chats:', error);
-      }
-    };
-
-    if (users.length > 0) {
-      fetchExistingChats();
-    }
-  }, [users, currentUser.uid]);
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -156,32 +129,33 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
 
   return (
     <div className="space-y-2">
-      {users.map((user) => (
-        <button
-          key={user.uid}
-          onClick={() => handleCreateChat(user)}
-          className="w-full p-3 flex items-center space-x-3 hover:bg-gray-50 rounded-lg transition-colors"
-        >
-          <UserAvatar
-            user={user}
-            className="h-10 w-10 relative"
-          >
-            {user.online && (
-              <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>
-            )}
-          </UserAvatar>
-          <div className="flex-1">
-            <div className="font-medium">{user.displayName || user.email}</div>
-            <div className="text-sm text-gray-500">
-              {formatLastSeen(user.lastSeen, user.online)}
-            </div>
-          </div>
-        </button>
-      ))}
-      {users.length === 0 && (
+      {users.length === 0 ? (
         <div className="text-center text-gray-500 p-4">
-          No users found
+          No other users found
         </div>
+      ) : (
+        users.map((user) => (
+          <button
+            key={user.uid}
+            onClick={() => handleCreateChat(user)}
+            className="w-full p-3 flex items-center space-x-3 hover:bg-gray-50 rounded-lg transition-colors"
+          >
+            <UserAvatar
+              user={user}
+              className="h-10 w-10 relative"
+            >
+              {user.online && (
+                <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>
+              )}
+            </UserAvatar>
+            <div className="flex-1">
+              <div className="font-medium">{user.displayName || user.email}</div>
+              <div className="text-sm text-gray-500">
+                {formatLastSeen(user.lastSeen, user.online)}
+              </div>
+            </div>
+          </button>
+        ))
       )}
     </div>
   );
