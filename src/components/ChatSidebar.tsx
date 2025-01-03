@@ -68,7 +68,12 @@ export default function ChatSidebar({
             (id: string) => id !== currentUser.uid
           );
 
-          if (otherParticipantId && data.participantDetails && !seenChats.has(doc.id)) {
+          // Only add chats that have messages or a lastMessage
+          if (otherParticipantId && 
+              data.participantDetails && 
+              !seenChats.has(doc.id) && 
+              data.lastMessage && 
+              data.lastMessageTime) {
             seenChats.add(doc.id);
             const chat = {
               id: doc.id,
@@ -76,7 +81,7 @@ export default function ChatSidebar({
               participantDetails: data.participantDetails,
               createdAt: data.createdAt ? (data.createdAt as Timestamp).toDate() : new Date(),
               lastMessageTime: data.lastMessageTime ? (data.lastMessageTime as Timestamp).toDate() : new Date(),
-              lastMessage: data.lastMessage || '',
+              lastMessage: data.lastMessage,
               typingUsers: data.typingUsers || {},
             };
             chatList.push(chat);

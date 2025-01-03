@@ -216,20 +216,20 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
       const messagesRef = collection(db, 'chats', chatId, 'messages');
       const chatRef = doc(db, 'chats', chatId);
 
-      // Add the message
-      await addDoc(messagesRef, {
-        text: messageText,
-        senderId: currentUser.uid,
-        timestamp,
-        read: false,
-      });
-
-      // Update the chat document
+      // First update the chat document to ensure lastMessageTime is set
       await updateDoc(chatRef, {
         lastMessage: messageText,
         lastMessageTime: timestamp,
         [`participantDetails.${currentUser.uid}.lastSeen`]: timestamp,
         [`participantDetails.${currentUser.uid}.online`]: true,
+      });
+
+      // Then add the message
+      await addDoc(messagesRef, {
+        text: messageText,
+        senderId: currentUser.uid,
+        timestamp,
+        read: false,
       });
 
     } catch (error) {
