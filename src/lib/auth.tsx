@@ -30,66 +30,65 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setUser(user);
-      setLoading(false);
-
       if (user) {
         // User is signed in
         const userDocRef = doc(db, 'users', user.uid);
         
         // Update online status when user signs in
         await setDoc(userDocRef, {
+          uid: user.uid,
+          email: user.email,
+          displayName: user.displayName,
+          photoURL: user.photoURL,
           online: true,
           lastSeen: serverTimestamp(),
         }, { merge: true });
 
-        // Set up presence system
-        const updatePresence = async (online: boolean) => {
-          const batch = writeBatch(db);
-          
-          // Update user document
-          batch.update(userDocRef, {
-            online,
-            lastSeen: serverTimestamp(),
-          });
-
-          // Find all chats where user is a participant
-          const chatsRef = collection(db, 'chats');
-          const q = query(chatsRef, where('participants', 'array-contains', user.uid));
-          const chatDocs = await getDocs(q);
-
-          // Update user's online status in all chats
-          chatDocs.forEach((chatDoc) => {
-            const chatRef = doc(db, 'chats', chatDoc.id);
-            batch.update(chatRef, {
-              [`participantDetails.${user.uid}.online`]: online,
-              [`participantDetails.${user.uid}.lastSeen`]: serverTimestamp(),
+        // Debounced presence update function
+        let presenceTimeout: NodeJS.Timeout;
+        const debouncedUpdatePresence = (online: boolean) => {
+          if (presenceTimeout) clearTimeout(presenceTimeout);
+          presenceTimeout = setTimeout(async () => {
+            const batch = writeBatch(db);
+            batch.update(userDocRef, {
+              online,
+              lastSeen: serverTimestamp(),
             });
-          });
 
-          // Commit all updates
-          await batch.commit();
+            try {
+              await batch.commit();
+            } catch (error) {
+              console.error('Error updating presence:', error);
+            }
+          }, 2000);
         };
 
-        // Update presence on page visibility change
-        document.addEventListener('visibilitychange', async () => {
-          if (document.visibilityState === 'hidden') {
-            await updatePresence(false);
-          } else {
-            await updatePresence(true);
-          }
-        });
+        // Update presence on visibility change
+        const handleVisibilityChange = () => {
+          debouncedUpdatePresence(document.visibilityState === 'visible');
+        };
 
         // Update presence on beforeunload
-        window.addEventListener('beforeunload', () => {
-          updatePresence(false);
-        });
+        const handleBeforeUnload = () => {
+          // Synchronous update for page unload
+          navigator.sendBeacon(
+            `/api/presence?uid=${user.uid}&online=false`
+          );
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('beforeunload', handleBeforeUnload);
+
+        // Set user state after all setup is complete
+        setUser(user);
+      } else {
+        setUser(null);
       }
+      setLoading(false);
     });
 
     return () => {
       unsubscribe();
-      // Clean up event listeners
       document.removeEventListener('visibilitychange', () => {});
       window.removeEventListener('beforeunload', () => {});
     };
