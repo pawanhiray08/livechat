@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import {
   GoogleAuthProvider,
   User,
@@ -15,6 +15,7 @@ interface AuthContextType {
   loading: boolean;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
+  searchUsers?: (searchTerm: string) => Promise<any>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -22,97 +23,31 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   signInWithGoogle: async () => {},
   signOut: async () => {},
+  searchUsers: async () => [],
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        // User is signed in
-        const userDocRef = doc(db, 'users', user.uid);
-        
-        // Update online status when user signs in
-        await setDoc(userDocRef, {
-          uid: user.uid,
-          email: user.email,
-          displayName: user.displayName,
-          photoURL: user.photoURL,
-          online: true,
-          lastSeen: serverTimestamp(),
-        }, { merge: true });
-
-        // Debounced presence update function
-        let presenceTimeout: NodeJS.Timeout;
-        const debouncedUpdatePresence = (online: boolean) => {
-          if (presenceTimeout) clearTimeout(presenceTimeout);
-          presenceTimeout = setTimeout(async () => {
-            const batch = writeBatch(db);
-            batch.update(userDocRef, {
-              online,
-              lastSeen: serverTimestamp(),
-            });
-
-            try {
-              await batch.commit();
-            } catch (error) {
-              console.error('Error updating presence:', error);
-            }
-          }, 2000);
-        };
-
-        // Update presence on visibility change
-        const handleVisibilityChange = () => {
-          debouncedUpdatePresence(document.visibilityState === 'visible');
-        };
-
-        // Update presence on beforeunload
-        const handleBeforeUnload = () => {
-          // Synchronous update for page unload
-          navigator.sendBeacon(
-            `/api/presence?uid=${user.uid}&online=false`
-          );
-        };
-
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-        window.addEventListener('beforeunload', handleBeforeUnload);
-
-        // Set user state after all setup is complete
-        setUser(user);
-      } else {
-        setUser(null);
-      }
-      setLoading(false);
-    });
-
-    return () => {
-      unsubscribe();
-      document.removeEventListener('visibilitychange', () => {});
-      window.removeEventListener('beforeunload', () => {});
-    };
-  }, []);
-
   const signInWithGoogle = async () => {
+    const provider = new GoogleAuthProvider();
     try {
-      const provider = new GoogleAuthProvider();
       const result = await signInWithPopup(auth, provider);
       const user = result.user;
-
-      // Create or update user document with all required fields
-      const userDocRef = doc(db, 'users', user.uid);
-      await setDoc(userDocRef, {
+      
+      // Update user document in Firestore
+      const userRef = doc(db, 'users', user.uid);
+      await setDoc(userRef, {
         uid: user.uid,
         email: user.email,
         displayName: user.displayName,
         photoURL: user.photoURL,
-        online: true,
         lastSeen: serverTimestamp(),
       }, { merge: true });
-
     } catch (error) {
       console.error('Error signing in with Google:', error);
+      throw error;
     }
   };
 
@@ -121,11 +56,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await auth.signOut();
     } catch (error) {
       console.error('Error signing out:', error);
+      throw error;
     }
   };
 
+  const searchUsers = async (searchTerm: string) => {
+    if (!searchTerm.trim()) return [];
+    const usersRef = collection(db, 'users');
+    const q = query(
+      usersRef,
+      where('displayName', '>=', searchTerm),
+      where('displayName', '<=', searchTerm + '\uf8ff'),
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  };
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setUser(user);
+      } else {
+        setUser(null);
+      }
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, loading, signInWithGoogle, signOut }}>
+    <AuthContext.Provider value={{
+      user,
+      loading,
+      signInWithGoogle,
+      signOut,
+      searchUsers,
+    }}>
       {children}
     </AuthContext.Provider>
   );

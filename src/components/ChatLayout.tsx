@@ -5,9 +5,13 @@ import { useAuth } from '@/lib/auth';
 import ChatSidebar from './ChatSidebar';
 import ChatWindow from './ChatWindow';
 import UserList from './UserList';
+import ProfileSettings from './ProfileSettings';
+import UserSearch from './UserSearch';
 
 export default function ChatLayout() {
   const [showUsers, setShowUsers] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const { user } = useAuth();
 
@@ -50,116 +54,77 @@ export default function ChatLayout() {
     }
   }, []);
 
+  const handleChatSelect = useCallback((chatId: string) => {
+    setSelectedChatId(chatId);
+    if (typeof window !== 'undefined') {
+      window.history.pushState({ chatId }, '', `/chat/${chatId}`);
+    }
+  }, []);
+
   if (!user) {
     return null;
   }
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      {/* Mobile header - only shown when chat is selected */}
-      {selectedChatId && (
-        <div className="fixed top-0 left-0 right-0 h-14 bg-white border-b border-gray-200 flex items-center px-4 md:hidden z-10">
-          <button
-            onClick={handleBackToChats}
-            className="mr-4 text-gray-600 hover:text-gray-900"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-          </button>
-          <h2 className="text-lg font-semibold">Back to Chats</h2>
+    <div className="flex h-screen bg-gray-100">
+      <ChatSidebar
+        currentUser={user}
+        selectedChatId={selectedChatId}
+        onChatSelect={handleChatSelect}
+        onShowSettings={() => setShowSettings(true)}
+        onShowSearch={() => setShowSearch(true)}
+      />
+      
+      {selectedChatId ? (
+        <ChatWindow
+          chatId={selectedChatId}
+          currentUser={user}
+        />
+      ) : (
+        <div className="flex-1 flex items-center justify-center">
+          <p className="text-gray-500">Select a chat to start messaging</p>
         </div>
       )}
 
-      {/* Sidebar */}
-      <div 
-        className={`${
-          selectedChatId ? 'hidden md:block' : 'block'
-        } w-full md:w-80 flex-shrink-0 border-r border-gray-200 bg-white h-full overflow-hidden`}
-      >
-        <div className="p-4 h-full flex flex-col">
-          <div className="flex justify-between items-center mb-4">
-            <h1 className="text-xl font-semibold">
-              {showUsers ? 'New Chat' : 'Recent Chats'}
-            </h1>
-            <button
-              onClick={() => setShowUsers(!showUsers)}
-              className="text-blue-500 hover:text-blue-600 text-sm font-medium"
-              data-show-users
-            >
-              {showUsers ? 'Show Chats' : 'New Chat'}
-            </button>
-          </div>
-          <div className="flex-1 overflow-hidden">
-            {showUsers ? (
-              <UserList 
-                currentUser={user} 
-                onChatCreated={(chatId) => {
-                  setSelectedChatId(chatId);
-                  setShowUsers(false);
-                  if (typeof window !== 'undefined') {
-                    window.history.pushState({ chatId }, '', `/chat/${chatId}`);
-                  }
-                }}
-              />
-            ) : (
-              <ChatSidebar 
-                currentUser={user} 
-                selectedChatId={selectedChatId} 
-                onChatSelect={(chatId) => {
-                  setSelectedChatId(chatId);
-                  if (typeof window !== 'undefined') {
-                    window.history.pushState({ chatId }, '', `/chat/${chatId}`);
-                  }
-                }}
-              />
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Main chat area */}
-      <div 
-        className={`${
-          selectedChatId ? 'block' : 'hidden md:block'
-        } flex-1 h-full ${selectedChatId ? 'md:pt-0 pt-14' : ''}`}
-      >
-        {selectedChatId ? (
-          <div className="h-full flex flex-col">
-            {/* Desktop back button */}
-            <div className="hidden md:block bg-white border-b border-gray-200">
+      {/* Settings Modal */}
+      {showSettings && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg w-full max-w-md m-4">
+            <div className="flex justify-between items-center p-4 border-b">
+              <h2 className="text-xl font-semibold">Profile Settings</h2>
               <button
-                onClick={handleBackToChats}
-                className="p-4 text-blue-500 hover:text-blue-600 flex items-center space-x-2"
+                onClick={() => setShowSettings(false)}
+                className="text-gray-500 hover:text-gray-700"
               >
-                <svg 
-                  xmlns="http://www.w3.org/2000/svg" 
-                  className="h-5 w-5" 
-                  viewBox="0 0 20 20" 
-                  fill="currentColor"
-                >
-                  <path 
-                    fillRule="evenodd" 
-                    d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" 
-                    clipRule="evenodd" 
-                  />
-                </svg>
-                <span>Back to Chats</span>
+                ×
               </button>
             </div>
-            <div className="flex-1">
-              <ChatWindow chatId={selectedChatId} currentUser={user} />
+            <div className="p-4">
+              <ProfileSettings onClose={() => setShowSettings(false)} />
             </div>
           </div>
-        ) : (
-          <div className="h-full flex items-center justify-center bg-gray-50">
-            <div className="text-center">
-              <h2 className="text-xl font-semibold text-gray-600 mb-2">Welcome to Chat</h2>
-              <p className="text-gray-500">Select a chat or start a new conversation</p>
+        </div>
+      )}
+
+      {/* Search Modal */}
+      {showSearch && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg w-full max-w-md m-4">
+            <div className="flex justify-between items-center p-4 border-b">
+              <h2 className="text-xl font-semibold">Find Users</h2>
+              <button
+                onClick={() => setShowSearch(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                ×
+              </button>
+            </div>
+            <div className="p-4">
+              <UserSearch onClose={() => setShowSearch(false)} />
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
