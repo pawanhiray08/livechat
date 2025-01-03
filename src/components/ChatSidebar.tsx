@@ -51,7 +51,7 @@ export default function ChatSidebar({
     const q = query(
       chatsRef,
       where('participants', 'array-contains', currentUser.uid),
-      orderBy('createdAt', 'desc'), // Change to createdAt since we always have this field
+      orderBy('lastMessageTime', 'desc'), // Sort by lastMessageTime to show recent chats first
       limit(50)
     );
 

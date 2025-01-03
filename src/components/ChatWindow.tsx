@@ -212,18 +212,26 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
     updateTypingStatus(false);
 
     try {
+      const timestamp = serverTimestamp();
       const messagesRef = collection(db, 'chats', chatId, 'messages');
-      await Promise.all([
-        addDoc(messagesRef, {
-          text: messageText,
-          senderId: currentUser.uid,
-          timestamp: serverTimestamp(),
-        }),
-        updateDoc(doc(db, 'chats', chatId), {
-          lastMessage: messageText,
-          lastMessageTime: serverTimestamp(),
-        }),
-      ]);
+      const chatRef = doc(db, 'chats', chatId);
+
+      // Add the message
+      await addDoc(messagesRef, {
+        text: messageText,
+        senderId: currentUser.uid,
+        timestamp,
+        read: false,
+      });
+
+      // Update the chat document
+      await updateDoc(chatRef, {
+        lastMessage: messageText,
+        lastMessageTime: timestamp,
+        [`participantDetails.${currentUser.uid}.lastSeen`]: timestamp,
+        [`participantDetails.${currentUser.uid}.online`]: true,
+      });
+
     } catch (error) {
       console.error('Error sending message:', error);
       setNewMessage(messageText); // Restore message if send fails
