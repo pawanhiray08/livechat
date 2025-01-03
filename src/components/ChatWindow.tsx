@@ -13,6 +13,7 @@ import {
   doc,
   getDoc,
   updateDoc,
+  setDoc,
   Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -94,9 +95,12 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
     
     const chatRef = doc(db, 'chats', chatId);
     try {
-      await updateDoc(chatRef, {
-        [`typingUsers.${currentUser.uid}`]: isTyping
-      });
+      // Use set with merge to ensure the typingUsers field exists
+      await setDoc(chatRef, {
+        typingUsers: {
+          [currentUser.uid]: isTyping
+        }
+      }, { merge: true });
     } catch (error) {
       console.error('Error updating typing status:', error);
     }
