@@ -16,9 +16,10 @@ import { ChatUser } from '@/types';
 
 interface UserListProps {
   currentUser: User;
+  onChatCreated?: (chatId: string) => void;
 }
 
-export default function UserList({ currentUser }: UserListProps) {
+export default function UserList({ currentUser, onChatCreated }: UserListProps) {
   const [users, setUsers] = useState<ChatUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -107,6 +108,9 @@ export default function UserList({ currentUser }: UserListProps) {
       });
 
       console.log('New chat created:', newChatRef.id);
+      if (onChatCreated) {
+        onChatCreated(newChatRef.id);
+      }
       setError('');
       
     } catch (error) {

@@ -27,7 +27,13 @@ export default function ChatLayout() {
             </button>
           </div>
           {showUsers ? (
-            <UserList currentUser={user} />
+            <UserList 
+              currentUser={user} 
+              onChatCreated={(chatId) => {
+                setSelectedChatId(chatId);
+                setShowUsers(false);
+              }}
+            />
           ) : (
             <ChatSidebar
               currentUser={user}
