@@ -38,55 +38,64 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout>();
 
-  // Fetch chat details
+  // Subscribe to chat document for real-time updates
   useEffect(() => {
-    const fetchChat = async () => {
-      try {
-        const chatDoc = await getDoc(doc(db, 'chats', chatId));
-        if (chatDoc.exists()) {
-          const data = chatDoc.data();
-          setChat({
-            id: chatDoc.id,
-            participants: data.participants,
-            participantDetails: data.participantDetails,
-            createdAt: (data.createdAt as Timestamp).toDate(),
-            lastMessageTime: (data.lastMessageTime as Timestamp).toDate(),
-            lastMessage: data.lastMessage,
-            typingUsers: data.typingUsers,
-          });
-        }
-      } catch (error) {
-        console.error('Error fetching chat:', error);
-        setError('Failed to load chat');
+    const chatRef = doc(db, 'chats', chatId);
+    
+    const unsubscribeChatDoc = onSnapshot(chatRef, (doc) => {
+      if (doc.exists()) {
+        const data = doc.data();
+        setChat({
+          id: doc.id,
+          participants: data.participants,
+          participantDetails: data.participantDetails,
+          createdAt: (data.createdAt as Timestamp).toDate(),
+          lastMessageTime: (data.lastMessageTime as Timestamp).toDate(),
+          lastMessage: data.lastMessage,
+          typingUsers: data.typingUsers || {},
+        });
       }
-    };
+    }, (error) => {
+      console.error('Error subscribing to chat:', error);
+      setError('Failed to load chat updates');
+    });
 
-    fetchChat();
+    return () => unsubscribeChatDoc();
   }, [chatId]);
 
   // Subscribe to messages
   useEffect(() => {
+    if (!chatId) return;
+
     const messagesRef = collection(db, 'chats', chatId, 'messages');
     const q = query(messagesRef, orderBy('createdAt', 'asc'));
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsubscribeMessages = onSnapshot(q, (snapshot) => {
       const messageList: MessageWithId[] = [];
       snapshot.forEach((doc) => {
         const data = doc.data();
-        messageList.push({
-          id: doc.id,
-          chatId,
-          senderId: data.senderId,
-          text: data.text,
-          createdAt: (data.createdAt as Timestamp).toDate(),
-        });
+        if (data.createdAt) {  // Only add messages with valid timestamps
+          messageList.push({
+            id: doc.id,
+            chatId,
+            senderId: data.senderId,
+            text: data.text,
+            createdAt: (data.createdAt as Timestamp).toDate(),
+          });
+        }
       });
       setMessages(messageList);
       setLoading(false);
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      // Scroll to bottom when new messages arrive
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }, (error) => {
+      console.error('Error subscribing to messages:', error);
+      setError('Failed to load messages');
     });
 
-    return () => unsubscribe();
+    return () => unsubscribeMessages();
   }, [chatId]);
 
   // Handle typing status
