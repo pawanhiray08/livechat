@@ -153,6 +153,11 @@ export default function ChatSidebar({
           return null;
         }
 
+        // Convert Firestore timestamp to Date if it exists
+        const lastSeen = otherParticipant.lastSeen 
+          ? (otherParticipant.lastSeen as unknown as Timestamp).toDate()
+          : null;
+
         return (
           <button
             key={chat.id}
@@ -203,10 +208,7 @@ export default function ChatSidebar({
                     )}
                   </div>
                   <span className="text-xs text-gray-400 ml-2 whitespace-nowrap">
-                    {formatLastSeen(
-                      otherParticipant.lastSeen ? new Date(otherParticipant.lastSeen) : null,
-                      otherParticipant.online
-                    )}
+                    {formatLastSeen(lastSeen, otherParticipant.online)}
                   </span>
                 </div>
               </div>

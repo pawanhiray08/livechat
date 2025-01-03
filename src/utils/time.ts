@@ -1,6 +1,9 @@
 export function formatLastSeen(date: Date | null, online?: boolean): string {
   if (online) return 'Online';
-  if (!date) return 'Never';
+  if (!date) return 'Offline';
+
+  // Check if date is valid
+  if (isNaN(date.getTime())) return 'Offline';
 
   const now = new Date();
   const diff = now.getTime() - date.getTime();
