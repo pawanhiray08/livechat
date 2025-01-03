@@ -97,11 +97,46 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
         });
       }
 
-      onChatCreated(chatId);
+      // Always navigate to the chat, whether it was just created or already existed
+      if (onChatCreated) {
+        onChatCreated(chatId);
+      }
     } catch (error) {
       console.error('Error creating chat:', error);
     }
   };
+
+  useEffect(() => {
+    const fetchExistingChats = async () => {
+      try {
+        const chatsRef = collection(db, 'chats');
+        const q = query(chatsRef, where('participants', 'array-contains', currentUser.uid));
+        const chatDocs = await getDocs(q);
+        
+        const existingChatPartners = new Set<string>();
+        chatDocs.forEach((doc) => {
+          const data = doc.data();
+          const otherParticipantId = data.participants.find(
+            (id: string) => id !== currentUser.uid
+          );
+          if (otherParticipantId) {
+            existingChatPartners.add(otherParticipantId);
+          }
+        });
+
+        // Filter users list to exclude those with existing chats
+        setUsers(prevUsers => 
+          prevUsers.filter(user => !existingChatPartners.has(user.uid))
+        );
+      } catch (error) {
+        console.error('Error fetching existing chats:', error);
+      }
+    };
+
+    if (users.length > 0) {
+      fetchExistingChats();
+    }
+  }, [users, currentUser.uid]);
 
   if (loading) {
     return (

@@ -45,6 +45,8 @@ export default function ChatSidebar({
       q,
       (snapshot) => {
         const chatList: ChatWithId[] = [];
+        const seenChats = new Set<string>();
+
         snapshot.forEach((doc) => {
           const data = doc.data();
           // Find the other participant
@@ -52,7 +54,9 @@ export default function ChatSidebar({
             (id: string) => id !== currentUser.uid
           );
 
-          if (otherParticipantId && data.participantDetails) {
+          // Skip if we've already seen this chat or if it's invalid
+          if (otherParticipantId && data.participantDetails && !seenChats.has(doc.id)) {
+            seenChats.add(doc.id);
             const chat = {
               id: doc.id,
               participants: data.participants,
@@ -62,11 +66,13 @@ export default function ChatSidebar({
               lastMessage: data.lastMessage || '',
               typingUsers: data.typingUsers || {},
             };
-            console.log('Chat data:', chat); // Debug log
             chatList.push(chat);
           }
         });
-        console.log('Total chats found:', chatList.length); // Debug log
+
+        // Sort chats by last message time, most recent first
+        chatList.sort((a, b) => b.lastMessageTime.getTime() - a.lastMessageTime.getTime());
+        
         setChats(chatList);
         setLoading(false);
       },
