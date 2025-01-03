@@ -56,18 +56,14 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
   const TYPING_TIMER_LENGTH = 3000;
 
   const updateTypingStatus = async (isTyping: boolean) => {
-    if (!currentUser?.uid || !chat) return;
+    if (!currentUser?.uid) return;
     
     const chatRef = doc(db, 'chats', chatId);
-    const typingUsers = { ...chat.typingUsers };
+    const typingUpdate = {
+      [`typingUsers.${currentUser.uid}`]: isTyping
+    };
     
-    if (isTyping) {
-      typingUsers[currentUser.uid] = true;
-    } else {
-      delete typingUsers[currentUser.uid];
-    }
-    
-    await updateDoc(chatRef, { typingUsers });
+    await updateDoc(chatRef, typingUpdate);
   };
 
   // Create virtualizer for messages
