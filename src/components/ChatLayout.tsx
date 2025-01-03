@@ -75,6 +75,7 @@ export default function ChatLayout() {
             <button
               onClick={() => setShowUsers(!showUsers)}
               className="text-blue-500 hover:text-blue-600 text-sm font-medium"
+              data-show-users
             >
               {showUsers ? 'Show Chats' : 'Show Users'}
             </button>

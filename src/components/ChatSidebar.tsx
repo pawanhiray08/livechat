@@ -55,31 +55,39 @@ export default function ChatSidebar({
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const chatList: ChatWithId[] = [];
-      const seenChats = new Set<string>();
+      try {
+        const chatList: ChatWithId[] = [];
+        const seenChats = new Set<string>();
 
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        const otherParticipantId = data.participants.find(
-          (id: string) => id !== currentUser.uid
-        );
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          const otherParticipantId = data.participants.find(
+            (id: string) => id !== currentUser.uid
+          );
 
-        if (otherParticipantId && data.participantDetails && !seenChats.has(doc.id)) {
-          seenChats.add(doc.id);
-          const chat = {
-            id: doc.id,
-            participants: data.participants,
-            participantDetails: data.participantDetails,
-            createdAt: data.createdAt ? (data.createdAt as Timestamp).toDate() : new Date(),
-            lastMessageTime: data.lastMessageTime ? (data.lastMessageTime as Timestamp).toDate() : new Date(),
-            lastMessage: data.lastMessage || '',
-            typingUsers: data.typingUsers || {},
-          };
-          chatList.push(chat);
-        }
-      });
+          if (otherParticipantId && data.participantDetails && !seenChats.has(doc.id)) {
+            seenChats.add(doc.id);
+            const chat = {
+              id: doc.id,
+              participants: data.participants,
+              participantDetails: data.participantDetails,
+              createdAt: data.createdAt ? (data.createdAt as Timestamp).toDate() : new Date(),
+              lastMessageTime: data.lastMessageTime ? (data.lastMessageTime as Timestamp).toDate() : new Date(),
+              lastMessage: data.lastMessage || '',
+              typingUsers: data.typingUsers || {},
+            };
+            chatList.push(chat);
+          }
+        });
 
-      setChats(chatList);
+        setChats(chatList);
+        setLoading(false);
+      } catch (error) {
+        console.error('Error processing chat data:', error);
+        setLoading(false);
+      }
+    }, (error) => {
+      console.error('Error in chat subscription:', error);
       setLoading(false);
     });
 
@@ -96,8 +104,14 @@ export default function ChatSidebar({
 
   if (chats.length === 0) {
     return (
-      <div className="text-center py-4 text-gray-500">
-        No chats yet. Start a new chat by clicking "Show Users"
+      <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
+        <p className="text-gray-500 mb-4">No chats yet</p>
+        <button
+          onClick={() => document.querySelector<HTMLButtonElement>('[data-show-users]')?.click()}
+          className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors"
+        >
+          Start a New Chat
+        </button>
       </div>
     );
   }
