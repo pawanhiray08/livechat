@@ -1,26 +1,24 @@
 export interface ChatUser {
   uid: string;
-  email: string | null;
-  displayName: string | null;
+  displayName: string;
   photoURL: string | null;
+  email: string;
   lastSeen?: Date;
 }
 
 interface ParticipantDetails {
   displayName: string;
   photoURL: string | null;
-  email: string | null;
+  email: string;
 }
 
 export interface Chat {
   id: string;
   participants: string[];
-  participantDetails: {
-    [key: string]: ParticipantDetails;
-  };
+  participantDetails: Record<string, ParticipantDetails>;
   createdAt: Date;
   lastMessageTime: Date;
-  lastMessage: string | null;
+  lastMessage: string;
 }
 
 export interface Message {

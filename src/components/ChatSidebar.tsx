@@ -37,8 +37,7 @@ export default function ChatSidebar({
     const chatsRef = collection(db, 'chats');
     const q = query(
       chatsRef,
-      where('participants', 'array-contains', currentUser.uid),
-      orderBy('lastMessageTime', 'desc')
+      where('participants', 'array-contains', currentUser.uid)
     );
 
     const unsubscribe = onSnapshot(
@@ -53,16 +52,19 @@ export default function ChatSidebar({
           );
 
           if (otherParticipantId && data.participantDetails) {
-            chatList.push({
+            const chat = {
               id: doc.id,
               participants: data.participants,
               participantDetails: data.participantDetails,
               createdAt: data.createdAt ? (data.createdAt as Timestamp).toDate() : new Date(),
               lastMessageTime: data.lastMessageTime ? (data.lastMessageTime as Timestamp).toDate() : new Date(),
-              lastMessage: data.lastMessage || null,
-            });
+              lastMessage: data.lastMessage || '',
+            };
+            console.log('Chat data:', chat); // Debug log
+            chatList.push(chat);
           }
         });
+        console.log('Total chats found:', chatList.length); // Debug log
         setChats(chatList);
         setLoading(false);
       },

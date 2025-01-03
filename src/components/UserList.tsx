@@ -75,10 +75,8 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
   };
 
   const startChat = async (otherUser: ChatUser) => {
-    if (creatingChat) return;
-    
     try {
-      setCreatingChat(true);
+      setLoading(true);
       setError('');
       
       // Check if chat exists
@@ -91,24 +89,25 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
         return;
       }
 
-      // Create new chat with participant details
-      const newChatRef = await addDoc(collection(db, 'chats'), {
+      // Create new chat
+      const chatsRef = collection(db, 'chats');
+      const newChatRef = await addDoc(chatsRef, {
         participants: [currentUser.uid, otherUser.uid],
         participantDetails: {
           [currentUser.uid]: {
-            displayName: currentUser.displayName || 'Unknown User',
+            displayName: currentUser.displayName || 'Anonymous',
             photoURL: currentUser.photoURL || null,
-            email: currentUser.email || null,
+            email: currentUser.email || '',
           },
           [otherUser.uid]: {
-            displayName: otherUser.displayName || 'Unknown User',
+            displayName: otherUser.displayName || 'Anonymous',
             photoURL: otherUser.photoURL || null,
-            email: otherUser.email || null,
-          },
+            email: otherUser.email || '',
+          }
         },
         createdAt: serverTimestamp(),
         lastMessageTime: serverTimestamp(),
-        lastMessage: null,
+        lastMessage: '',
       });
 
       console.log('New chat created:', newChatRef.id);
@@ -118,10 +117,10 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
       setError('');
       
     } catch (error) {
-      console.error('Error creating chat:', error);
-      setError('Failed to create chat');
+      console.error('Error starting chat:', error);
+      setError('Failed to start chat');
     } finally {
-      setCreatingChat(false);
+      setLoading(false);
     }
   };
 
