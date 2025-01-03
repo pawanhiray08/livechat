@@ -5,193 +5,214 @@ import { User } from 'firebase/auth';
 import {
   collection,
   query,
+  where,
   orderBy,
   onSnapshot,
   addDoc,
   serverTimestamp,
   doc,
-  updateDoc,
+  getDoc,
+  Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { PaperAirplaneIcon } from '@heroicons/react/24/solid';
 import UserAvatar from './UserAvatar';
+import { Chat, Message } from '@/types';
 
 interface ChatWindowProps {
   chatId: string;
   currentUser: User;
 }
 
-interface Message {
+interface MessageWithId extends Message {
   id: string;
-  text: string;
-  senderId: string;
-  timestamp: any;
-}
-
-interface ChatUser {
-  uid: string;
-  displayName: string;
-  photoURL: string;
-  email: string;
-  isTyping?: boolean;
 }
 
 export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<MessageWithId[]>([]);
   const [newMessage, setNewMessage] = useState('');
-  const [otherUser, setOtherUser] = useState<ChatUser | null>(null);
-  const [isTyping, setIsTyping] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [chat, setChat] = useState<Chat | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout>();
 
-  // Scroll to bottom when new messages arrive
+  // Fetch chat details
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    const fetchChat = async () => {
+      try {
+        const chatDoc = await getDoc(doc(db, 'chats', chatId));
+        if (chatDoc.exists()) {
+          const data = chatDoc.data();
+          setChat({
+            id: chatDoc.id,
+            participants: data.participants,
+            participantDetails: data.participantDetails,
+            createdAt: (data.createdAt as Timestamp).toDate(),
+            lastMessageTime: (data.lastMessageTime as Timestamp).toDate(),
+            lastMessage: data.lastMessage,
+          });
+        }
+      } catch (error) {
+        console.error('Error fetching chat:', error);
+        setError('Failed to load chat');
+      }
+    };
 
-  // Listen to messages and typing status
+    fetchChat();
+  }, [chatId]);
+
+  // Subscribe to messages
   useEffect(() => {
-    const messagesQuery = query(
-      collection(db, `chats/${chatId}/messages`),
-      orderBy('timestamp')
-    );
+    const messagesRef = collection(db, 'chats', chatId, 'messages');
+    const q = query(messagesRef, orderBy('createdAt', 'asc'));
 
-    const unsubscribeMessages = onSnapshot(messagesQuery, (snapshot) => {
-      const messageList: Message[] = [];
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const messageList: MessageWithId[] = [];
       snapshot.forEach((doc) => {
-        messageList.push({ id: doc.id, ...doc.data() } as Message);
+        const data = doc.data();
+        messageList.push({
+          id: doc.id,
+          chatId,
+          senderId: data.senderId,
+          text: data.text,
+          createdAt: (data.createdAt as Timestamp).toDate(),
+        });
       });
       setMessages(messageList);
+      setLoading(false);
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     });
 
-    const unsubscribeTyping = onSnapshot(doc(db, 'chats', chatId), (doc) => {
-      const data = doc.data();
-      if (data?.typingUsers) {
-        setIsTyping(data.typingUsers.includes(otherUser?.uid));
-      }
-    });
-
-    return () => {
-      unsubscribeMessages();
-      unsubscribeTyping();
-    };
-  }, [chatId, otherUser?.uid]);
-
-  // Update typing status
-  const updateTypingStatus = async (typing: boolean) => {
-    const chatRef = doc(db, 'chats', chatId);
-    const typingUsers = typing 
-      ? [currentUser.uid]
-      : [];
-    
-    await updateDoc(chatRef, {
-      typingUsers
-    });
-  };
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setNewMessage(e.target.value);
-
-    // Clear previous timeout
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
-
-    // Set typing status to true
-    updateTypingStatus(true);
-
-    // Set new timeout to clear typing status
-    typingTimeoutRef.current = setTimeout(() => {
-      updateTypingStatus(false);
-    }, 1000);
-  };
+    return () => unsubscribe();
+  }, [chatId]);
 
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim()) return;
 
     try {
-      await addDoc(collection(db, `chats/${chatId}/messages`), {
+      const messagesRef = collection(db, 'chats', chatId, 'messages');
+      const chatRef = doc(db, 'chats', chatId);
+
+      await addDoc(messagesRef, {
         text: newMessage,
         senderId: currentUser.uid,
-        timestamp: serverTimestamp(),
+        createdAt: serverTimestamp(),
       });
 
-      // Update last message in chat document
-      const chatRef = doc(db, 'chats', chatId);
+      // Update last message in chat
       await updateDoc(chatRef, {
-        lastMessage: {
-          text: newMessage,
-          senderId: currentUser.uid,
-          timestamp: serverTimestamp(),
-        },
+        lastMessage: newMessage,
         lastMessageTime: serverTimestamp(),
       });
 
       setNewMessage('');
-      updateTypingStatus(false);
     } catch (error) {
       console.error('Error sending message:', error);
+      setError('Failed to send message');
     }
   };
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-gray-500">Loading messages...</div>
+      </div>
+    );
+  }
+
+  if (!chat) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-red-500">Chat not found</div>
+      </div>
+    );
+  }
+
+  const otherParticipantId = chat.participants.find(
+    (id) => id !== currentUser.uid
+  )!;
+  const otherParticipant = chat.participantDetails[otherParticipantId];
+
   return (
     <div className="flex flex-col h-full">
+      <div className="flex items-center p-4 border-b">
+        <UserAvatar
+          user={{
+            displayName: otherParticipant.displayName,
+            photoURL: otherParticipant.photoURL,
+            email: otherParticipant.email,
+          }}
+          className="h-10 w-10"
+        />
+        <div className="ml-3">
+          <p className="font-medium">{otherParticipant.displayName}</p>
+          <p className="text-sm text-gray-500">{otherParticipant.email}</p>
+        </div>
+      </div>
+
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={`flex items-start space-x-2 ${
-              message.senderId === currentUser.uid ? 'flex-row-reverse' : ''
-            }`}
-          >
-            <UserAvatar
-              user={message.senderId === currentUser.uid ? currentUser : otherUser}
-              className="flex-shrink-0"
-            />
+        {messages.map((message) => {
+          const isCurrentUser = message.senderId === currentUser.uid;
+          const sender = isCurrentUser
+            ? chat.participantDetails[currentUser.uid]
+            : otherParticipant;
+
+          return (
             <div
-              className={`max-w-[70%] px-4 py-2 rounded-lg ${
-                message.senderId === currentUser.uid
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-gray-100 text-gray-900'
-              }`}
+              key={message.id}
+              className={`flex ${isCurrentUser ? 'justify-end' : 'justify-start'}`}
             >
-              <p>{message.text}</p>
-              <p className="text-xs opacity-70 mt-1">
-                {message.timestamp?.toDate().toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
-              </p>
+              <div
+                className={`flex items-start space-x-2 max-w-[70%] ${
+                  isCurrentUser ? 'flex-row-reverse space-x-reverse' : ''
+                }`}
+              >
+                <UserAvatar
+                  user={{
+                    displayName: sender.displayName,
+                    photoURL: sender.photoURL,
+                    email: sender.email,
+                  }}
+                  className="h-8 w-8"
+                />
+                <div
+                  className={`rounded-lg px-4 py-2 ${
+                    isCurrentUser
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-gray-100 text-gray-900'
+                  }`}
+                >
+                  <p className="text-sm">{message.text}</p>
+                  <p className="text-xs mt-1 opacity-70">
+                    {message.createdAt.toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </p>
+                </div>
+              </div>
             </div>
-          </div>
-        ))}
-        {isTyping && (
-          <div className="flex items-center space-x-2">
-            <div className="flex space-x-1">
-              <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" />
-              <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce delay-100" />
-              <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce delay-200" />
-            </div>
-            <span className="text-sm text-gray-500">typing...</span>
-          </div>
-        )}
+          );
+        })}
         <div ref={messagesEndRef} />
       </div>
+
       <form onSubmit={sendMessage} className="p-4 border-t">
-        <div className="flex space-x-2">
+        {error && <p className="text-red-500 text-sm mb-2">{error}</p>}
+        <div className="flex space-x-4">
           <input
             type="text"
             value={newMessage}
-            onChange={handleInputChange}
+            onChange={(e) => setNewMessage(e.target.value)}
             placeholder="Type a message..."
-            className="flex-1 rounded-full border border-gray-300 px-4 py-2 focus:outline-none focus:border-blue-500"
+            className="flex-1 rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:border-blue-500"
           />
           <button
             type="submit"
-            className="bg-blue-500 text-white rounded-full p-2 hover:bg-blue-600 focus:outline-none"
+            disabled={!newMessage.trim()}
+            className="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <PaperAirplaneIcon className="h-5 w-5" />
+            Send
           </button>
         </div>
       </form>

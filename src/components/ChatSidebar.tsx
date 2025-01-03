@@ -1,19 +1,18 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { User } from 'firebase/auth';
 import {
   collection,
   query,
   where,
-  onSnapshot,
   orderBy,
-  getDocs,
+  onSnapshot,
+  Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import NewChat from './NewChat';
 import UserAvatar from './UserAvatar';
-import { cn } from '@/lib/utils';
+import { Chat } from '@/types';
 
 interface ChatSidebarProps {
   currentUser: User;
@@ -21,21 +20,8 @@ interface ChatSidebarProps {
   onChatSelect: (chatId: string) => void;
 }
 
-interface Chat {
+interface ChatWithId extends Chat {
   id: string;
-  participants: string[];
-  lastMessage?: {
-    text: string;
-    senderId: string;
-    timestamp: any;
-  };
-}
-
-interface ChatUser {
-  uid: string;
-  displayName: string;
-  photoURL: string;
-  email: string;
 }
 
 export default function ChatSidebar({
@@ -43,92 +29,103 @@ export default function ChatSidebar({
   selectedChatId,
   onChatSelect,
 }: ChatSidebarProps) {
-  const [chats, setChats] = useState<Chat[]>([]);
-  const [users, setUsers] = useState<Record<string, ChatUser>>({});
+  const [chats, setChats] = useState<ChatWithId[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Fetch chats
   useEffect(() => {
+    const chatsRef = collection(db, 'chats');
     const q = query(
-      collection(db, 'chats'),
+      chatsRef,
       where('participants', 'array-contains', currentUser.uid),
       orderBy('lastMessageTime', 'desc')
     );
 
-    return onSnapshot(q, (snapshot) => {
-      const chatList: Chat[] = [];
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const chatList: ChatWithId[] = [];
       snapshot.forEach((doc) => {
-        chatList.push({ id: doc.id, ...doc.data() } as Chat);
+        const data = doc.data();
+        const otherParticipantId = data.participants.find(
+          (id: string) => id !== currentUser.uid
+        );
+        const otherParticipant = data.participantDetails[otherParticipantId];
+
+        chatList.push({
+          id: doc.id,
+          participants: data.participants,
+          participantDetails: data.participantDetails,
+          createdAt: (data.createdAt as Timestamp).toDate(),
+          lastMessageTime: (data.lastMessageTime as Timestamp).toDate(),
+          lastMessage: data.lastMessage,
+        });
       });
       setChats(chatList);
-
-      // Fetch users for all participants
-      const userIds = new Set<string>();
-      chatList.forEach((chat) => {
-        chat.participants.forEach((id) => userIds.add(id));
-      });
-
-      userIds.forEach(async (uid) => {
-        if (!users[uid]) {
-          const userDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', uid)));
-          if (!userDoc.empty) {
-            const userData = userDoc.docs[0].data() as ChatUser;
-            setUsers((prev) => ({ ...prev, [uid]: userData }));
-          }
-        }
-      });
+      setLoading(false);
     });
+
+    return () => unsubscribe();
   }, [currentUser.uid]);
 
-  return (
-    <div className="w-80 flex flex-col border-r border-gray-200 bg-white">
-      <div className="p-4 border-b">
-        <NewChat currentUser={currentUser} />
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-4">
+        <div className="text-gray-500">Loading chats...</div>
       </div>
-      <div className="flex-1 overflow-y-auto">
-        {chats.map((chat) => {
-          const otherParticipant = users[
-            chat.participants.find((id) => id !== currentUser.uid) || ''
-          ];
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {chats.length === 0 ? (
+        <div className="text-gray-500 text-center py-4">No chats yet</div>
+      ) : (
+        chats.map((chat) => {
+          const otherParticipantId = chat.participants.find(
+            (id) => id !== currentUser.uid
+          )!;
+          const otherParticipant = chat.participantDetails[otherParticipantId];
 
           return (
             <button
               key={chat.id}
               onClick={() => onChatSelect(chat.id)}
-              className={cn(
-                'w-full p-4 flex items-center space-x-3 hover:bg-gray-50 transition-colors',
-                selectedChatId === chat.id && 'bg-blue-50 hover:bg-blue-50'
-              )}
+              className={`w-full text-left p-3 rounded-lg transition-colors ${
+                selectedChatId === chat.id
+                  ? 'bg-blue-50'
+                  : 'hover:bg-gray-50'
+              }`}
             >
-              {otherParticipant && (
+              <div className="flex items-center space-x-3">
                 <UserAvatar
-                  user={otherParticipant}
-                  className="flex-shrink-0"
+                  user={{
+                    displayName: otherParticipant.displayName,
+                    photoURL: otherParticipant.photoURL,
+                    email: otherParticipant.email,
+                  }}
+                  className="h-10 w-10"
                 />
-              )}
-              <div className="flex-1 min-w-0">
-                <div className="flex justify-between items-baseline">
-                  <p className="text-sm font-medium text-gray-900 truncate">
-                    {otherParticipant?.displayName || 'Loading...'}
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-sm truncate">
+                    {otherParticipant.displayName}
                   </p>
                   {chat.lastMessage && (
-                    <p className="text-xs text-gray-500">
-                      {new Date(chat.lastMessage.timestamp?.toDate()).toLocaleTimeString([], {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
+                    <p className="text-xs text-gray-500 truncate">
+                      {chat.lastMessage}
                     </p>
                   )}
                 </div>
-                {chat.lastMessage && (
-                  <p className="text-sm text-gray-500 truncate">
-                    {chat.lastMessage.text}
-                  </p>
+                {chat.lastMessageTime && (
+                  <span className="text-xs text-gray-400">
+                    {new Date(chat.lastMessageTime).toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </span>
                 )}
               </div>
             </button>
           );
-        })}
-      </div>
+        })
+      )}
     </div>
   );
 }
