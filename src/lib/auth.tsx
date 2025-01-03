@@ -31,6 +31,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const signInWithGoogle = async () => {
+    setLoading(true);
     const provider = new GoogleAuthProvider();
     try {
       const result = await signInWithPopup(auth, provider);
@@ -48,15 +49,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (error) {
       console.error('Error signing in with Google:', error);
       throw error;
+    } finally {
+      setLoading(false);
     }
   };
 
   const signOut = async () => {
+    setLoading(true);
     try {
       await auth.signOut();
     } catch (error) {
       console.error('Error signing out:', error);
       throw error;
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -74,12 +80,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        setUser(user);
-      } else {
-        setUser(null);
+      try {
+        if (user) {
+          // Update user document in Firestore
+          const userRef = doc(db, 'users', user.uid);
+          await setDoc(userRef, {
+            uid: user.uid,
+            email: user.email,
+            displayName: user.displayName,
+            photoURL: user.photoURL,
+            lastSeen: serverTimestamp(),
+            online: true,
+          }, { merge: true });
+          setUser(user);
+        } else {
+          setUser(null);
+        }
+      } catch (error) {
+        console.error('Error updating user document:', error);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => unsubscribe();

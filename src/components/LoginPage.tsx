@@ -5,7 +5,7 @@ import Image from 'next/image';
 import { useState } from 'react';
 
 export default function LoginPage() {
-  const { signInWithGoogle } = useAuth();
+  const { signInWithGoogle, loading: authLoading } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,26 +29,37 @@ export default function LoginPage() {
           <h2 className="mt-6 text-3xl font-bold text-gray-900">Welcome to Realtime Chat</h2>
           <p className="mt-2 text-sm text-gray-600">Sign in to start chatting</p>
         </div>
+
         {error && (
-          <div className="text-red-500 text-sm text-center">{error}</div>
+          <div className="bg-red-50 p-4 rounded-md">
+            <p className="text-sm text-red-700">{error}</p>
+          </div>
         )}
+
         <button
           onClick={handleSignIn}
-          disabled={isLoading}
-          className={`group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 border-gray-300 ${
-            isLoading ? 'opacity-50 cursor-not-allowed' : ''
+          disabled={isLoading || authLoading}
+          className={`w-full flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${
+            (isLoading || authLoading) ? 'opacity-50 cursor-not-allowed' : ''
           }`}
         >
-          <span className="flex items-center">
-            <Image
-              src="/google.svg"
-              alt="Google logo"
-              width={20}
-              height={20}
-              className="mr-2"
-            />
-            {isLoading ? 'Signing in...' : 'Sign in with Google'}
-          </span>
+          {(isLoading || authLoading) ? (
+            <>
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
+              Signing in...
+            </>
+          ) : (
+            <>
+              <Image
+                src="/google.svg"
+                alt="Google Logo"
+                width={20}
+                height={20}
+                className="mr-2"
+              />
+              Sign in with Google
+            </>
+          )}
         </button>
       </div>
     </div>
