@@ -33,7 +33,14 @@ export default function UserList({ currentUser }: UserListProps) {
         
         const userList: ChatUser[] = [];
         querySnapshot.forEach((doc) => {
-          userList.push(doc.data() as ChatUser);
+          const userData = doc.data();
+          userList.push({
+            uid: userData.uid,
+            email: userData.email,
+            displayName: userData.displayName,
+            photoURL: userData.photoURL,
+            lastSeen: userData.lastSeen
+          });
         });
         
         setUsers(userList);
@@ -48,6 +55,27 @@ export default function UserList({ currentUser }: UserListProps) {
     fetchUsers();
   }, [currentUser.uid]);
 
+  const checkExistingChat = async (currentUserId: string, otherUserId: string) => {
+    const chatsRef = collection(db, 'chats');
+    
+    // Check both possible participant arrangements
+    const q1 = query(
+      chatsRef,
+      where('participants', '==', [currentUserId, otherUserId])
+    );
+    const q2 = query(
+      chatsRef,
+      where('participants', '==', [otherUserId, currentUserId])
+    );
+
+    const [snapshot1, snapshot2] = await Promise.all([
+      getDocs(q1),
+      getDocs(q2)
+    ]);
+
+    return !snapshot1.empty || !snapshot2.empty;
+  };
+
   const startChat = async (otherUser: ChatUser) => {
     if (creatingChat) return;
     
@@ -55,32 +83,16 @@ export default function UserList({ currentUser }: UserListProps) {
       setCreatingChat(true);
       setError('');
       
-      // Get all chats where current user is a participant
-      const chatsRef = collection(db, 'chats');
-      const q = query(
-        chatsRef,
-        where('participants', 'array-contains', currentUser.uid)
-      );
+      // Check if chat exists
+      const chatExists = await checkExistingChat(currentUser.uid, otherUser.uid);
       
-      const chatSnapshot = await getDocs(q);
-      let existingChatId: string | null = null;
-
-      // Check if any of these chats include the other user
-      chatSnapshot.forEach((doc) => {
-        const chatData = doc.data();
-        if (chatData.participants.includes(otherUser.uid)) {
-          existingChatId = doc.id;
-        }
-      });
-
-      if (existingChatId) {
-        // Instead of showing error, we could optionally navigate to the existing chat
+      if (chatExists) {
         setError('Chat already exists with this user');
         return;
       }
 
       // Create new chat with participant details
-      const newChatRef = await addDoc(chatsRef, {
+      const newChatRef = await addDoc(collection(db, 'chats'), {
         participants: [currentUser.uid, otherUser.uid],
         participantDetails: {
           [currentUser.uid]: {
@@ -126,31 +138,43 @@ export default function UserList({ currentUser }: UserListProps) {
       {users.length === 0 ? (
         <div className="text-gray-500 text-center py-4">No other users found</div>
       ) : (
-        users.map((user) => (
-          <div
-            key={user.uid}
-            className="flex items-center justify-between p-3 bg-white rounded-lg shadow-sm hover:bg-gray-50 transition-colors"
-          >
-            <div className="flex items-center space-x-3">
-              <UserAvatar user={user} className="h-8 w-8" />
-              <div>
-                <p className="font-medium text-sm">{user.displayName || 'Unknown User'}</p>
-                <p className="text-xs text-gray-500">{user.email || 'No email'}</p>
-              </div>
-            </div>
-            <button
-              onClick={() => startChat(user)}
-              disabled={creatingChat}
-              className={`${
-                creatingChat
-                  ? 'bg-gray-400 cursor-not-allowed'
-                  : 'bg-blue-500 hover:bg-blue-600'
-              } text-white px-3 py-1 text-sm rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors`}
+        users.map((user) => {
+          const displayName = user.displayName || 'Unknown User';
+          const email = user.email || 'No email';
+          
+          return (
+            <div
+              key={user.uid}
+              className="flex items-center justify-between p-3 bg-white rounded-lg shadow-sm hover:bg-gray-50 transition-colors"
             >
-              {creatingChat ? 'Creating...' : 'Start Chat'}
-            </button>
-          </div>
-        ))
+              <div className="flex items-center space-x-3">
+                <UserAvatar 
+                  user={{
+                    displayName,
+                    photoURL: user.photoURL,
+                    email
+                  }} 
+                  className="h-8 w-8" 
+                />
+                <div>
+                  <p className="font-medium text-sm">{displayName}</p>
+                  <p className="text-xs text-gray-500">{email}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => startChat(user)}
+                disabled={creatingChat}
+                className={`${
+                  creatingChat
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-blue-500 hover:bg-blue-600'
+                } text-white px-3 py-1 text-sm rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors`}
+              >
+                {creatingChat ? 'Creating...' : 'Start Chat'}
+              </button>
+            </div>
+          );
+        })
       )}
     </div>
   );
