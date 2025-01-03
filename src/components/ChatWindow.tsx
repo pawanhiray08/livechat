@@ -268,7 +268,7 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
               </span>
             ) : (
               <p className="text-xs md:text-sm text-gray-500 truncate">
-                {formatLastSeen(otherParticipant.lastSeen?.toDate() || null)}
+                {formatLastSeen(otherParticipant.lastSeen instanceof Timestamp ? otherParticipant.lastSeen.toDate() : otherParticipant.lastSeen || null)}
               </p>
             )}
           </div>

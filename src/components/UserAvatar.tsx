@@ -10,9 +10,10 @@ interface AvatarUser {
 interface UserAvatarProps {
   user: AvatarUser;
   className?: string;
+  children?: React.ReactNode;
 }
 
-export default function UserAvatar({ user, className }: UserAvatarProps) {
+export default function UserAvatar({ user, className, children }: UserAvatarProps) {
   if (!user?.photoURL) {
     return (
       <div
@@ -22,6 +23,7 @@ export default function UserAvatar({ user, className }: UserAvatarProps) {
         )}
       >
         {user?.displayName?.[0] || user?.email?.[0] || '?'}
+        {children}
       </div>
     );
   }
@@ -35,6 +37,7 @@ export default function UserAvatar({ user, className }: UserAvatarProps) {
         height={40}
         className="object-cover w-full h-full"
       />
+      {children}
     </div>
   );
 }
