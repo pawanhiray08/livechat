@@ -19,28 +19,56 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import UserAvatar from './UserAvatar';
-import { Chat, Message } from '@/types';
+import { Message } from '@/types';
 import { formatLastSeen } from '@/utils/time';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
-interface ChatWindowProps {
-  chatId: string;
-  currentUser: User;
+interface Chat {
+  id: string;
+  participants: string[];
+  participantDetails: Record<string, any>;
+  createdAt: Date;
+  lastMessageTime: Date;
+  lastMessage: string;
+  typingUsers: Record<string, boolean>;
+  draftMessages: Record<string, string>;
 }
 
 interface MessageWithId extends Message {
   id: string;
 }
 
+interface ChatWindowProps {
+  chatId: string;
+  currentUser: User;
+}
+
 export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
   const [messages, setMessages] = useState<Message[]>([]);
+  const [chat, setChat] = useState<Chat | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const lastTypingTime = useRef<number>(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const parentRef = useRef<HTMLDivElement>(null);
   const TYPING_TIMER_LENGTH = 3000;
+
+  const updateTypingStatus = async (isTyping: boolean) => {
+    if (!currentUser?.uid || !chat) return;
+    
+    const chatRef = doc(db, 'chats', chatId);
+    const typingUsers = { ...chat.typingUsers };
+    
+    if (isTyping) {
+      typingUsers[currentUser.uid] = true;
+    } else {
+      delete typingUsers[currentUser.uid];
+    }
+    
+    await updateDoc(chatRef, { typingUsers });
+  };
 
   // Create virtualizer for messages
   const rowVirtualizer = useVirtualizer({
