@@ -20,6 +20,7 @@ export interface Chat {
   lastMessageTime: Date;
   lastMessage: string;
   typingUsers?: Record<string, boolean>;
+  draftMessages?: Record<string, string>;
 }
 
 export interface Message {

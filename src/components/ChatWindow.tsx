@@ -53,6 +53,7 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
           lastMessageTime: (data.lastMessageTime as Timestamp).toDate(),
           lastMessage: data.lastMessage,
           typingUsers: data.typingUsers || {},
+          draftMessages: data.draftMessages || {},
         });
       }
     }, (error) => {
@@ -98,16 +99,18 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
     return () => unsubscribeMessages();
   }, [chatId]);
 
-  // Handle typing status
-  const updateTypingStatus = async (isTyping: boolean) => {
+  // Handle typing status and draft message
+  const updateTypingStatus = async (isTyping: boolean, draftMessage: string = '') => {
     if (!chatId) return;
     
     const chatRef = doc(db, 'chats', chatId);
     try {
-      // Use set with merge to ensure the typingUsers field exists
       await setDoc(chatRef, {
         typingUsers: {
           [currentUser.uid]: isTyping
+        },
+        draftMessages: {
+          [currentUser.uid]: draftMessage
         }
       }, { merge: true });
     } catch (error) {
@@ -116,19 +119,20 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setNewMessage(e.target.value);
+    const newValue = e.target.value;
+    setNewMessage(newValue);
     
     // Clear existing timeout
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
     }
 
-    // Set typing status to true
-    updateTypingStatus(true);
+    // Update typing status and draft message
+    updateTypingStatus(true, newValue);
 
     // Set a new timeout to clear typing status after 2 seconds of no typing
     typingTimeoutRef.current = setTimeout(() => {
-      updateTypingStatus(false);
+      updateTypingStatus(false, '');
     }, 2000);
   };
 
@@ -139,6 +143,9 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
     try {
       const messagesRef = collection(db, 'chats', chatId, 'messages');
       const chatRef = doc(db, 'chats', chatId);
+
+      // Clear typing status and draft message immediately
+      await updateTypingStatus(false, '');
 
       await addDoc(messagesRef, {
         text: newMessage,
@@ -165,7 +172,7 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
       }
-      updateTypingStatus(false);
+      updateTypingStatus(false, '');
     };
   }, []);
 
@@ -256,8 +263,9 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
         {chat?.typingUsers && Object.entries(chat.typingUsers).map(([userId, isTyping]) => {
           if (isTyping && userId !== currentUser.uid) {
             const userDetails = chat.participantDetails[userId];
+            const draftMessage = chat.draftMessages?.[userId] || '';
             return (
-              <div key={userId} className="flex items-center space-x-2 text-gray-500 text-xs md:text-sm mb-2">
+              <div key={userId} className="flex items-start space-x-2 max-w-[85%] md:max-w-[70%] animate-fade-in">
                 <UserAvatar 
                   user={{ 
                     photoURL: userDetails.photoURL,
@@ -266,11 +274,18 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
                   }}
                   className="h-6 w-6 md:h-8 md:w-8"
                 />
-                <span>{userDetails.displayName} is typing...</span>
-                <div className="typing-indicator">
-                  <span></span>
-                  <span></span>
-                  <span></span>
+                <div className="flex flex-col">
+                  <span className="text-xs text-gray-500">{userDetails.displayName} is typing...</span>
+                  {draftMessage && (
+                    <div className="bg-gray-100 text-gray-600 rounded-lg px-3 py-2 mt-1 text-sm italic">
+                      {draftMessage}
+                      <div className="typing-indicator inline-flex ml-1">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -288,7 +303,7 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
             type="text"
             value={newMessage}
             onChange={handleInputChange}
-            onBlur={() => updateTypingStatus(false)}
+            onBlur={() => updateTypingStatus(false, '')}
             placeholder="Type a message..."
             className="flex-1 rounded-lg border border-gray-300 px-3 py-2 md:px-4 md:py-2 text-sm md:text-base focus:outline-none focus:border-blue-500"
           />
