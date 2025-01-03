@@ -15,11 +15,13 @@ import {
   updateDoc,
   setDoc,
   Timestamp,
+  limit,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import UserAvatar from './UserAvatar';
 import { Chat, Message } from '@/types';
 import { formatLastSeen } from '@/utils/time';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 interface ChatWindowProps {
   chatId: string;
@@ -31,14 +33,22 @@ interface MessageWithId extends Message {
 }
 
 export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
-  const [messages, setMessages] = useState<MessageWithId[]>([]);
-  const [newMessage, setNewMessage] = useState('');
+  const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [chat, setChat] = useState<Chat | null>(null);
+  const [newMessage, setNewMessage] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const lastTypingTime = useRef<number>(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout>();
-  const presenceRef = useRef<NodeJS.Timeout>();
+  const parentRef = useRef<HTMLDivElement>(null);
+  const TYPING_TIMER_LENGTH = 3000;
+
+  // Create virtualizer for messages
+  const rowVirtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: useCallback(() => 60, []), // Estimate each message height
+    overscan: 5, // Number of items to render outside of the visible area
+  });
 
   // Update user's presence
   const updatePresence = useCallback(async () => {
@@ -59,6 +69,7 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
     updatePresence();
 
     // Set up regular presence updates
+    const presenceRef = useRef<NodeJS.Timeout>();
     presenceRef.current = setInterval(updatePresence, 30000);
 
     // Set up offline status
@@ -111,266 +122,150 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
     return () => unsubscribeChatDoc();
   }, [chatId]);
 
-  // Subscribe to messages
   useEffect(() => {
-    if (!chatId) return;
-
     const messagesRef = collection(db, 'chats', chatId, 'messages');
-    const q = query(messagesRef, orderBy('createdAt', 'asc'));
+    const q = query(messagesRef, orderBy('createdAt', 'desc'), limit(50));
 
-    const unsubscribeMessages = onSnapshot(q, (snapshot) => {
-      const messageList: MessageWithId[] = [];
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const messageList: Message[] = [];
       snapshot.forEach((doc) => {
         const data = doc.data();
-        if (data.createdAt) {  // Only add messages with valid timestamps
-          messageList.push({
-            id: doc.id,
-            chatId,
-            senderId: data.senderId,
-            text: data.text,
-            createdAt: (data.createdAt as Timestamp).toDate(),
-          });
-        }
+        messageList.push({
+          id: doc.id,
+          chatId,
+          senderId: data.senderId,
+          text: data.text,
+          createdAt: data.createdAt ? (data.createdAt as Timestamp).toDate() : new Date(),
+        });
       });
-      setMessages(messageList);
+      setMessages(messageList.reverse());
       setLoading(false);
-      // Scroll to bottom when new messages arrive
-      setTimeout(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, 100);
-    }, (error) => {
-      console.error('Error subscribing to messages:', error);
-      setError('Failed to load messages');
+      
+      // Scroll to bottom only if we're near the bottom already
+      if (parentRef.current) {
+        const { scrollHeight, scrollTop, clientHeight } = parentRef.current;
+        const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
+        if (isNearBottom) {
+          scrollToBottom();
+        }
+      }
     });
 
-    return () => unsubscribeMessages();
+    return () => unsubscribe();
   }, [chatId]);
 
-  // Handle typing status and draft message
-  const updateTypingStatus = async (isTyping: boolean, draftMessage: string = '') => {
-    if (!chatId) return;
-    
-    const chatRef = doc(db, 'chats', chatId);
-    try {
-      await setDoc(chatRef, {
-        typingUsers: {
-          [currentUser.uid]: isTyping
-        },
-        draftMessages: {
-          [currentUser.uid]: draftMessage
-        }
-      }, { merge: true });
-    } catch (error) {
-      console.error('Error updating typing status:', error);
+  const scrollToBottom = useCallback(() => {
+    if (parentRef.current) {
+      parentRef.current.scrollTop = parentRef.current.scrollHeight;
     }
-  };
+  }, []);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newValue = e.target.value;
-    setNewMessage(newValue);
-    
-    // Clear existing timeout
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
+  const handleTyping = useCallback(() => {
+    if (!isTyping) {
+      setIsTyping(true);
+      updateTypingStatus(true);
     }
-
-    // Update typing status and draft message
-    updateTypingStatus(true, newValue);
-
-    // Set a new timeout to clear typing status after 2 seconds of no typing
-    typingTimeoutRef.current = setTimeout(() => {
-      updateTypingStatus(false, '');
-    }, 2000);
-  };
+    lastTypingTime.current = Date.now();
+    setTimeout(() => {
+      const timeNow = Date.now();
+      const timeDiff = timeNow - lastTypingTime.current;
+      if (timeDiff >= TYPING_TIMER_LENGTH && isTyping) {
+        setIsTyping(false);
+        updateTypingStatus(false);
+      }
+    }, TYPING_TIMER_LENGTH);
+  }, [isTyping]);
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim()) return;
 
+    const messageText = newMessage;
+    setNewMessage('');
+    setIsTyping(false);
+    updateTypingStatus(false);
+
     try {
       const messagesRef = collection(db, 'chats', chatId, 'messages');
-      const chatRef = doc(db, 'chats', chatId);
-
-      // Clear typing status and draft message immediately
-      await updateTypingStatus(false, '');
-
-      await addDoc(messagesRef, {
-        text: newMessage,
-        senderId: currentUser.uid,
-        createdAt: serverTimestamp(),
-      });
-
-      // Update last message in chat
-      await updateDoc(chatRef, {
-        lastMessage: newMessage,
-        lastMessageTime: serverTimestamp(),
-      });
-
-      setNewMessage('');
+      await Promise.all([
+        addDoc(messagesRef, {
+          text: messageText,
+          senderId: currentUser.uid,
+          createdAt: serverTimestamp(),
+        }),
+        updateDoc(doc(db, 'chats', chatId), {
+          lastMessage: messageText,
+          lastMessageTime: serverTimestamp(),
+        }),
+      ]);
     } catch (error) {
       console.error('Error sending message:', error);
-      setError('Failed to send message');
+      setNewMessage(messageText); // Restore message if send fails
     }
   };
 
-  // Cleanup typing status when component unmounts
-  useEffect(() => {
-    return () => {
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
-      updateTypingStatus(false, '');
-    };
-  }, []);
-
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-gray-500">Loading messages...</div>
+      <div className="flex-1 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900" />
       </div>
     );
   }
-
-  if (!chat) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-red-500">Chat not found</div>
-      </div>
-    );
-  }
-
-  const otherParticipantId = chat.participants.find(
-    (id) => id !== currentUser.uid
-  )!;
-  const otherParticipant = chat.participantDetails[otherParticipantId];
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
-      {/* Header */}
-      <div className="flex items-center p-3 md:p-4 border-b bg-white shadow-sm">
-        <UserAvatar
-          user={{
-            displayName: otherParticipant.displayName,
-            photoURL: otherParticipant.photoURL,
-            email: otherParticipant.email,
-          }}
-          className="h-8 w-8 md:h-10 md:w-10"
-        />
-        <div className="ml-3 flex-1 min-w-0">
-          <p className="font-medium text-sm md:text-base truncate">
-            {otherParticipant.displayName}
-          </p>
-          <div className="flex items-center space-x-1">
-            {otherParticipant.online ? (
-              <span className="flex items-center text-xs md:text-sm text-green-500">
-                <span className="w-2 h-2 bg-green-500 rounded-full mr-1"></span>
-                Online
-              </span>
-            ) : (
-              <p className="text-xs md:text-sm text-gray-500 truncate">
-                {formatLastSeen(otherParticipant.lastSeen instanceof Timestamp ? otherParticipant.lastSeen.toDate() : otherParticipant.lastSeen || null)}
-              </p>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Messages Container */}
-      <div className="flex-1 overflow-y-auto p-3 md:p-4 space-y-3 md:space-y-4 min-h-0 bg-gray-50">
-        {messages.map((message) => {
-          const isCurrentUser = message.senderId === currentUser.uid;
-          const sender = isCurrentUser
-            ? chat.participantDetails[currentUser.uid]
-            : otherParticipant;
-
+    <div className="flex flex-col h-full">
+      <div 
+        ref={parentRef}
+        className="flex-1 overflow-auto p-4 space-y-4"
+        style={{ height: 'calc(100vh - 160px)' }}
+      >
+        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+          const message = messages[virtualRow.index];
+          const isOwnMessage = message.senderId === currentUser.uid;
+          
           return (
             <div
               key={message.id}
-              className={`flex ${isCurrentUser ? 'justify-end' : 'justify-start'} animate-fade-in`}
+              data-index={virtualRow.index}
+              ref={rowVirtualizer.measureElement}
+              className={`flex ${isOwnMessage ? 'justify-end' : 'justify-start'}`}
             >
               <div
-                className={`flex items-start space-x-2 max-w-[85%] md:max-w-[70%] ${
-                  isCurrentUser ? 'flex-row-reverse space-x-reverse' : ''
+                className={`max-w-[70%] rounded-lg px-4 py-2 ${
+                  isOwnMessage
+                    ? 'bg-blue-500 text-white'
+                    : 'bg-gray-100 text-gray-900'
                 }`}
               >
-                <UserAvatar
-                  user={{
-                    displayName: sender.displayName,
-                    photoURL: sender.photoURL,
-                    email: sender.email,
-                  }}
-                  className="h-6 w-6 md:h-8 md:w-8 hidden md:block"
-                />
-                <div
-                  className={`rounded-lg px-3 py-2 md:px-4 md:py-2 break-words ${
-                    isCurrentUser
-                      ? 'bg-blue-500 text-white'
-                      : 'bg-gray-100 text-gray-900'
-                  }`}
-                >
-                  <p className="text-sm md:text-base whitespace-pre-wrap">{message.text}</p>
-                  <p className="text-[10px] md:text-xs mt-1 opacity-70">
-                    {message.createdAt.toLocaleTimeString([], {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </p>
-                </div>
+                <p className="break-words">{message.text}</p>
+                <p className="text-xs mt-1 opacity-70">
+                  {new Date(message.createdAt).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                </p>
               </div>
             </div>
           );
         })}
-        {chat?.typingUsers && Object.entries(chat.typingUsers).map(([userId, isTyping]) => {
-          if (isTyping && userId !== currentUser.uid) {
-            const userDetails = chat.participantDetails[userId];
-            const draftMessage = chat.draftMessages?.[userId] || '';
-            return (
-              <div key={userId} className="flex items-start space-x-2 max-w-[85%] md:max-w-[70%] animate-fade-in">
-                <UserAvatar 
-                  user={{ 
-                    photoURL: userDetails.photoURL,
-                    displayName: userDetails.displayName,
-                    email: userDetails.email
-                  }}
-                  className="h-6 w-6 md:h-8 md:w-8"
-                />
-                <div className="flex flex-col flex-1 min-w-0">
-                  <span className="text-xs text-gray-500 truncate">{userDetails.displayName} is typing...</span>
-                  {draftMessage && (
-                    <div className="bg-gray-100 text-gray-600 rounded-lg px-3 py-2 mt-1 text-sm italic break-words">
-                      {draftMessage}
-                      <div className="typing-indicator inline-flex ml-1">
-                        <span></span>
-                        <span></span>
-                        <span></span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          }
-          return null;
-        })}
-        <div ref={messagesEndRef} />
       </div>
 
-      {/* Message Input */}
-      <form onSubmit={handleSendMessage} className="p-2 md:p-4 border-t bg-white">
-        {error && <p className="text-red-500 text-xs md:text-sm mb-2">{error}</p>}
-        <div className="flex space-x-2 md:space-x-4">
+      <form onSubmit={handleSendMessage} className="p-4 bg-white border-t">
+        <div className="flex space-x-4">
           <input
             type="text"
             value={newMessage}
-            onChange={handleInputChange}
-            onBlur={() => updateTypingStatus(false, '')}
+            onChange={(e) => {
+              setNewMessage(e.target.value);
+              handleTyping();
+            }}
             placeholder="Type a message..."
-            className="flex-1 rounded-lg border border-gray-300 px-3 py-2 md:px-4 md:py-2 text-sm md:text-base focus:outline-none focus:border-blue-500"
+            className="flex-1 rounded-full border border-gray-300 px-4 py-2 focus:outline-none focus:border-blue-500"
           />
           <button
             type="submit"
             disabled={!newMessage.trim()}
-            className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm md:text-base whitespace-nowrap"
+            className="bg-blue-500 text-white rounded-full px-6 py-2 hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Send
           </button>

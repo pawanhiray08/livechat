@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { User } from 'firebase/auth';
 import {
   collection,
@@ -9,11 +9,13 @@ import {
   orderBy,
   onSnapshot,
   Timestamp,
+  limit,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import UserAvatar from './UserAvatar';
 import { Chat } from '@/types';
 import { formatLastSeen } from '@/utils/time';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 interface ChatSidebarProps {
   currentUser: User;
@@ -32,55 +34,54 @@ export default function ChatSidebar({
 }: ChatSidebarProps) {
   const [chats, setChats] = useState<ChatWithId[]>([]);
   const [loading, setLoading] = useState(true);
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  // Create virtualizer for chat list
+  const rowVirtualizer = useVirtualizer({
+    count: chats.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: useCallback(() => 80, []), // Estimate each chat item height
+    overscan: 5, // Number of items to render outside of the visible area
+  });
 
   useEffect(() => {
     // Query chats where the current user is a participant
     const chatsRef = collection(db, 'chats');
     const q = query(
       chatsRef,
-      where('participants', 'array-contains', currentUser.uid)
+      where('participants', 'array-contains', currentUser.uid),
+      orderBy('lastMessageTime', 'desc'),
+      limit(50)
     );
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const chatList: ChatWithId[] = [];
-        const seenChats = new Set<string>();
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const chatList: ChatWithId[] = [];
+      const seenChats = new Set<string>();
 
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          // Find the other participant
-          const otherParticipantId = data.participants.find(
-            (id: string) => id !== currentUser.uid
-          );
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        const otherParticipantId = data.participants.find(
+          (id: string) => id !== currentUser.uid
+        );
 
-          // Skip if we've already seen this chat or if it's invalid
-          if (otherParticipantId && data.participantDetails && !seenChats.has(doc.id)) {
-            seenChats.add(doc.id);
-            const chat = {
-              id: doc.id,
-              participants: data.participants,
-              participantDetails: data.participantDetails,
-              createdAt: data.createdAt ? (data.createdAt as Timestamp).toDate() : new Date(),
-              lastMessageTime: data.lastMessageTime ? (data.lastMessageTime as Timestamp).toDate() : new Date(),
-              lastMessage: data.lastMessage || '',
-              typingUsers: data.typingUsers || {},
-            };
-            chatList.push(chat);
-          }
-        });
+        if (otherParticipantId && data.participantDetails && !seenChats.has(doc.id)) {
+          seenChats.add(doc.id);
+          const chat = {
+            id: doc.id,
+            participants: data.participants,
+            participantDetails: data.participantDetails,
+            createdAt: data.createdAt ? (data.createdAt as Timestamp).toDate() : new Date(),
+            lastMessageTime: data.lastMessageTime ? (data.lastMessageTime as Timestamp).toDate() : new Date(),
+            lastMessage: data.lastMessage || '',
+            typingUsers: data.typingUsers || {},
+          };
+          chatList.push(chat);
+        }
+      });
 
-        // Sort chats by last message time, most recent first
-        chatList.sort((a, b) => b.lastMessageTime.getTime() - a.lastMessageTime.getTime());
-        
-        setChats(chatList);
-        setLoading(false);
-      },
-      (error) => {
-        console.error('Error fetching chats:', error);
-        setLoading(false);
-      }
-    );
+      setChats(chatList);
+      setLoading(false);
+    });
 
     return () => unsubscribe();
   }, [currentUser.uid]);
@@ -88,7 +89,7 @@ export default function ChatSidebar({
   if (loading) {
     return (
       <div className="flex items-center justify-center py-4">
-        <div className="text-gray-500">Loading chats...</div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900" />
       </div>
     );
   }
@@ -102,8 +103,13 @@ export default function ChatSidebar({
   }
 
   return (
-    <div className="space-y-2">
-      {chats.map((chat) => {
+    <div 
+      ref={parentRef} 
+      className="space-y-2 overflow-auto"
+      style={{ height: 'calc(100vh - 100px)' }}
+    >
+      {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+        const chat = chats[virtualRow.index];
         const otherParticipantId = chat.participants.find(
           (id) => id !== currentUser.uid
         )!;
@@ -112,11 +118,11 @@ export default function ChatSidebar({
         return (
           <button
             key={chat.id}
+            data-index={virtualRow.index}
+            ref={rowVirtualizer.measureElement}
             onClick={() => onChatSelect(chat.id)}
             className={`w-full text-left p-3 rounded-lg transition-colors ${
-              selectedChatId === chat.id
-                ? 'bg-blue-50'
-                : 'hover:bg-gray-50'
+              selectedChatId === chat.id ? 'bg-blue-50' : 'hover:bg-gray-50'
             }`}
           >
             <div className="flex items-center space-x-3">
@@ -153,7 +159,10 @@ export default function ChatSidebar({
                     </p>
                   )}
                   <span className="text-xs text-gray-400 ml-2">
-                    {formatLastSeen(otherParticipant.lastSeen ? new Date(otherParticipant.lastSeen) : null, otherParticipant.online)}
+                    {formatLastSeen(
+                      otherParticipant.lastSeen ? new Date(otherParticipant.lastSeen) : null,
+                      otherParticipant.online
+                    )}
                   </span>
                 </div>
               </div>
