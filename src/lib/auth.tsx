@@ -8,7 +8,7 @@ import {
   signInWithPopup,
 } from 'firebase/auth';
 import { auth, db } from './firebase';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 interface AuthContextType {
   user: User | null;
@@ -29,12 +29,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setUser(user);
       setLoading(false);
+
+      if (user) {
+        // User is signed in
+        const userDocRef = doc(db, 'users', user.uid);
+        
+        // Update online status when user signs in
+        await setDoc(userDocRef, {
+          online: true,
+          lastSeen: serverTimestamp(),
+        }, { merge: true });
+
+        // Set up presence system
+        const updatePresence = async () => {
+          await setDoc(userDocRef, {
+            online: false,
+            lastSeen: serverTimestamp(),
+          }, { merge: true });
+        };
+
+        // Update presence on page visibility change
+        document.addEventListener('visibilitychange', async () => {
+          if (document.visibilityState === 'hidden') {
+            await updatePresence();
+          } else {
+            await setDoc(userDocRef, {
+              online: true,
+              lastSeen: serverTimestamp(),
+            }, { merge: true });
+          }
+        });
+
+        // Update presence on beforeunload
+        window.addEventListener('beforeunload', () => {
+          updatePresence();
+        });
+      }
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      // Clean up event listeners
+      document.removeEventListener('visibilitychange', () => {});
+      window.removeEventListener('beforeunload', () => {});
+    };
   }, []);
 
   const signInWithGoogle = async () => {
@@ -51,7 +92,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           email: user.email,
           displayName: user.displayName,
           photoURL: user.photoURL,
-          lastSeen: new Date(),
+          online: true,
+          lastSeen: serverTimestamp(),
         },
         { merge: true }
       );

@@ -125,15 +125,11 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
               <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>
             )}
           </UserAvatar>
-          <div className="flex-1 min-w-0">
-            <p className="font-medium truncate">{user.displayName}</p>
-            <p className="text-sm text-gray-500 truncate">
-              {user.online ? (
-                <span className="text-green-500">Online</span>
-              ) : (
-                formatLastSeen(user.lastSeen)
-              )}
-            </p>
+          <div className="flex-1">
+            <div className="font-medium">{user.displayName || user.email}</div>
+            <div className="text-sm text-gray-500">
+              {formatLastSeen(user.lastSeen, user.online)}
+            </div>
           </div>
         </button>
       ))}

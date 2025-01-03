@@ -1,4 +1,5 @@
-export function formatLastSeen(date: Date | null): string {
+export function formatLastSeen(date: Date | null, online?: boolean): string {
+  if (online) return 'Online';
   if (!date) return 'Never';
 
   const now = new Date();
@@ -17,9 +18,9 @@ export function formatLastSeen(date: Date | null): string {
   if (days === 1) return 'Last seen yesterday';
   if (days < 7) return `Last seen ${days} days ago`;
 
-  return date.toLocaleDateString('en-US', {
+  return `Last seen ${date.toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
     year: now.getFullYear() !== date.getFullYear() ? 'numeric' : undefined,
-  });
+  })}`;
 }
