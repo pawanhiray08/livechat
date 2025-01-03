@@ -6,11 +6,21 @@ export interface ChatUser {
   lastSeen?: Date;
 }
 
+interface ParticipantDetails {
+  displayName: string;
+  photoURL: string | null;
+  email: string | null;
+}
+
 export interface Chat {
   id: string;
   participants: string[];
+  participantDetails: {
+    [key: string]: ParticipantDetails;
+  };
   createdAt: Date;
   lastMessageTime: Date;
+  lastMessage: string | null;
 }
 
 export interface Message {

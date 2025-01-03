@@ -22,6 +22,7 @@ export default function UserList({ currentUser }: UserListProps) {
   const [users, setUsers] = useState<ChatUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [creatingChat, setCreatingChat] = useState(false);
 
   useEffect(() => {
     const fetchUsers = async () => {
@@ -48,35 +49,64 @@ export default function UserList({ currentUser }: UserListProps) {
   }, [currentUser.uid]);
 
   const startChat = async (otherUser: ChatUser) => {
+    if (creatingChat) return;
+    
     try {
+      setCreatingChat(true);
       setError('');
-      // Check if chat already exists
+      
+      // Get all chats where current user is a participant
       const chatsRef = collection(db, 'chats');
-      const chatQuery = query(
+      const q = query(
         chatsRef,
         where('participants', 'array-contains', currentUser.uid)
       );
+      
+      const chatSnapshot = await getDocs(q);
+      let existingChatId: string | null = null;
 
-      const chatSnapshot = await getDocs(chatQuery);
-      const existingChat = chatSnapshot.docs.some(doc => {
-        const chat = doc.data();
-        return chat.participants.includes(otherUser.uid);
+      // Check if any of these chats include the other user
+      chatSnapshot.forEach((doc) => {
+        const chatData = doc.data();
+        if (chatData.participants.includes(otherUser.uid)) {
+          existingChatId = doc.id;
+        }
       });
 
-      if (existingChat) {
+      if (existingChatId) {
+        // Instead of showing error, we could optionally navigate to the existing chat
         setError('Chat already exists with this user');
         return;
       }
 
-      // Create new chat
-      await addDoc(chatsRef, {
+      // Create new chat with participant details
+      const newChatRef = await addDoc(chatsRef, {
         participants: [currentUser.uid, otherUser.uid],
+        participantDetails: {
+          [currentUser.uid]: {
+            displayName: currentUser.displayName || 'Unknown User',
+            photoURL: currentUser.photoURL || null,
+            email: currentUser.email || null,
+          },
+          [otherUser.uid]: {
+            displayName: otherUser.displayName || 'Unknown User',
+            photoURL: otherUser.photoURL || null,
+            email: otherUser.email || null,
+          },
+        },
         createdAt: serverTimestamp(),
         lastMessageTime: serverTimestamp(),
+        lastMessage: null,
       });
+
+      console.log('New chat created:', newChatRef.id);
+      setError('');
+      
     } catch (error) {
       console.error('Error creating chat:', error);
       setError('Failed to create chat');
+    } finally {
+      setCreatingChat(false);
     }
   };
 
@@ -104,15 +134,20 @@ export default function UserList({ currentUser }: UserListProps) {
             <div className="flex items-center space-x-3">
               <UserAvatar user={user} className="h-8 w-8" />
               <div>
-                <p className="font-medium text-sm">{user.displayName}</p>
-                <p className="text-xs text-gray-500">{user.email}</p>
+                <p className="font-medium text-sm">{user.displayName || 'Unknown User'}</p>
+                <p className="text-xs text-gray-500">{user.email || 'No email'}</p>
               </div>
             </div>
             <button
               onClick={() => startChat(user)}
-              className="bg-blue-500 text-white px-3 py-1 text-sm rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              disabled={creatingChat}
+              className={`${
+                creatingChat
+                  ? 'bg-gray-400 cursor-not-allowed'
+                  : 'bg-blue-500 hover:bg-blue-600'
+              } text-white px-3 py-1 text-sm rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors`}
             >
-              Start Chat
+              {creatingChat ? 'Creating...' : 'Start Chat'}
             </button>
           </div>
         ))
