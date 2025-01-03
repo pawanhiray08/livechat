@@ -73,6 +73,7 @@ export default function ChatSidebar({
           // 2. Are newly created (only have createdAt)
           if (otherParticipantId && 
               data.participantDetails && 
+              data.participantDetails[otherParticipantId] &&
               !seenChats.has(doc.id)) {
             seenChats.add(doc.id);
             const chat = {

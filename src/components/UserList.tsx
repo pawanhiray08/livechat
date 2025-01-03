@@ -42,14 +42,16 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
       snapshot.forEach((doc) => {
         console.log('User doc:', doc.id, doc.data());
         const data = doc.data();
-        userList.push({
-          uid: data.uid,
-          displayName: data.displayName,
-          photoURL: data.photoURL,
-          email: data.email,
-          lastSeen: data.lastSeen ? (data.lastSeen as Timestamp).toDate() : null,
-          online: data.online || false,
-        });
+        if (data.uid && data.displayName) {  
+          userList.push({
+            uid: data.uid,
+            displayName: data.displayName || 'Unknown User',
+            photoURL: data.photoURL || null,
+            email: data.email || '',
+            lastSeen: data.lastSeen ? (data.lastSeen as Timestamp).toDate() : null,
+            online: data.online || false,
+          });
+        }
       });
       console.log('Final user list:', userList);
       setUsers(userList);
