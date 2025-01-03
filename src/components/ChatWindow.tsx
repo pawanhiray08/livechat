@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { User } from 'firebase/auth';
 import {
   collection,
@@ -19,6 +19,7 @@ import {
 import { db } from '@/lib/firebase';
 import UserAvatar from './UserAvatar';
 import { Chat, Message } from '@/types';
+import { formatLastSeen } from '@/utils/time';
 
 interface ChatWindowProps {
   chatId: string;
@@ -37,6 +38,52 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
   const [chat, setChat] = useState<Chat | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout>();
+  const presenceRef = useRef<NodeJS.Timeout>();
+
+  // Update user's presence
+  const updatePresence = useCallback(async () => {
+    if (!currentUser?.uid) return;
+    
+    const userRef = doc(db, 'users', currentUser.uid);
+    await setDoc(userRef, {
+      lastSeen: serverTimestamp(),
+      online: true
+    }, { merge: true });
+  }, [currentUser?.uid]);
+
+  // Set up presence system
+  useEffect(() => {
+    if (!currentUser?.uid) return;
+
+    // Update presence immediately
+    updatePresence();
+
+    // Set up regular presence updates
+    presenceRef.current = setInterval(updatePresence, 30000);
+
+    // Set up offline status
+    const userRef = doc(db, 'users', currentUser.uid);
+    
+    // Mark user as offline when they leave
+    const handleOffline = () => {
+      setDoc(userRef, {
+        lastSeen: serverTimestamp(),
+        online: false
+      }, { merge: true });
+    };
+
+    window.addEventListener('beforeunload', handleOffline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      if (presenceRef.current) {
+        clearInterval(presenceRef.current);
+      }
+      handleOffline();
+      window.removeEventListener('beforeunload', handleOffline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [currentUser?.uid, updatePresence]);
 
   // Subscribe to chat document for real-time updates
   useEffect(() => {
@@ -213,9 +260,18 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
           <p className="font-medium text-sm md:text-base truncate">
             {otherParticipant.displayName}
           </p>
-          <p className="text-xs md:text-sm text-gray-500 truncate">
-            {otherParticipant.email}
-          </p>
+          <div className="flex items-center space-x-1">
+            {otherParticipant.online ? (
+              <span className="flex items-center text-xs md:text-sm text-green-500">
+                <span className="w-2 h-2 bg-green-500 rounded-full mr-1"></span>
+                Online
+              </span>
+            ) : (
+              <p className="text-xs md:text-sm text-gray-500 truncate">
+                {formatLastSeen(otherParticipant.lastSeen?.toDate() || null)}
+              </p>
+            )}
+          </div>
         </div>
       </div>
 

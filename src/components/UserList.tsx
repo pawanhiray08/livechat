@@ -9,10 +9,15 @@ import {
   addDoc,
   serverTimestamp,
   where,
+  onSnapshot,
+  doc,
+  getDoc,
+  setDoc,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import UserAvatar from './UserAvatar';
 import { ChatUser } from '@/types';
+import { formatLastSeen } from '@/utils/time';
 
 interface UserListProps {
   currentUser: User;
@@ -23,160 +28,118 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
   const [users, setUsers] = useState<ChatUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [creatingChat, setCreatingChat] = useState(false);
 
   useEffect(() => {
-    const fetchUsers = async () => {
-      try {
-        const usersRef = collection(db, 'users');
-        const q = query(usersRef, where('uid', '!=', currentUser.uid));
-        const querySnapshot = await getDocs(q);
-        
-        const userList: ChatUser[] = [];
-        querySnapshot.forEach((doc) => {
-          const userData = doc.data();
-          userList.push({
-            uid: userData.uid,
-            email: userData.email,
-            displayName: userData.displayName,
-            photoURL: userData.photoURL,
-            lastSeen: userData.lastSeen
-          });
+    const usersRef = collection(db, 'users');
+    const q = query(usersRef, where('uid', '!=', currentUser.uid));
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const userList: ChatUser[] = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        userList.push({
+          uid: data.uid,
+          displayName: data.displayName,
+          photoURL: data.photoURL,
+          email: data.email,
+          lastSeen: data.lastSeen ? (data.lastSeen as Timestamp).toDate() : null,
+          online: data.online || false,
         });
-        
-        setUsers(userList);
-      } catch (error) {
-        console.error('Error fetching users:', error);
-        setError('Failed to load users');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchUsers();
-  }, [currentUser.uid]);
-
-  const checkExistingChat = async (currentUserId: string, otherUserId: string) => {
-    const chatsRef = collection(db, 'chats');
-    
-    // Check if both users are participants in the same chat
-    const q = query(
-      chatsRef,
-      where('participants', 'array-contains', currentUserId)
-    );
-
-    const snapshot = await getDocs(q);
-    const existingChat = snapshot.docs.find(doc => {
-      const participants = doc.data().participants;
-      return participants.includes(otherUserId);
+      });
+      setUsers(userList);
+      setLoading(false);
+    }, (error) => {
+      console.error('Error fetching users:', error);
+      setError('Failed to load users');
+      setLoading(false);
     });
 
-    return existingChat ? existingChat.id : null;
-  };
+    return () => unsubscribe();
+  }, [currentUser.uid]);
 
-  const startChat = async (otherUser: ChatUser) => {
+  const handleCreateChat = async (otherUser: ChatUser) => {
     try {
-      setLoading(true);
-      setError('');
-      
-      // Check if chat exists
-      const existingChatId = await checkExistingChat(currentUser.uid, otherUser.uid);
-      
-      if (existingChatId) {
-        if (onChatCreated) {
-          onChatCreated(existingChatId);
-        }
-        return;
-      }
+      // Create a unique chat ID
+      const chatId = [currentUser.uid, otherUser.uid].sort().join('_');
+      const chatRef = doc(db, 'chats', chatId);
+      const chatDoc = await getDoc(chatRef);
 
-      // Create new chat
-      const chatsRef = collection(db, 'chats');
-      const newChatRef = await addDoc(chatsRef, {
-        participants: [currentUser.uid, otherUser.uid],
-        participantDetails: {
-          [currentUser.uid]: {
-            displayName: currentUser.displayName || 'Anonymous',
-            photoURL: currentUser.photoURL || null,
-            email: currentUser.email || '',
+      if (!chatDoc.exists()) {
+        // Create new chat
+        await setDoc(chatRef, {
+          participants: [currentUser.uid, otherUser.uid],
+          participantDetails: {
+            [currentUser.uid]: {
+              displayName: currentUser.displayName,
+              photoURL: currentUser.photoURL,
+              email: currentUser.email,
+            },
+            [otherUser.uid]: {
+              displayName: otherUser.displayName,
+              photoURL: otherUser.photoURL,
+              email: otherUser.email,
+            },
           },
-          [otherUser.uid]: {
-            displayName: otherUser.displayName || 'Anonymous',
-            photoURL: otherUser.photoURL || null,
-            email: otherUser.email || '',
-          }
-        },
-        createdAt: serverTimestamp(),
-        lastMessageTime: serverTimestamp(),
-        lastMessage: '',
-      });
-
-      console.log('New chat created:', newChatRef.id);
-      if (onChatCreated) {
-        onChatCreated(newChatRef.id);
+          createdAt: serverTimestamp(),
+          lastMessageTime: serverTimestamp(),
+          lastMessage: '',
+        });
       }
-      setError('');
-      
+
+      onChatCreated(chatId);
     } catch (error) {
-      console.error('Error starting chat:', error);
-      setError('Failed to start chat');
-    } finally {
-      setLoading(false);
+      console.error('Error creating chat:', error);
     }
   };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-4">
-        <div className="text-gray-500">Loading users...</div>
+      <div className="flex items-center justify-center h-full">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-red-500 text-center p-4">
+        {error}
       </div>
     );
   }
 
   return (
     <div className="space-y-2">
-      {error && (
-        <div className="text-red-500 text-sm text-center py-2">{error}</div>
-      )}
-      {users.length === 0 ? (
-        <div className="text-gray-500 text-center py-4">No other users found</div>
-      ) : (
-        users.map((user) => {
-          const displayName = user.displayName || 'Unknown User';
-          const email = user.email || 'No email';
-          
-          return (
-            <div
-              key={user.uid}
-              className="flex items-center justify-between p-3 bg-white rounded-lg shadow-sm hover:bg-gray-50 transition-colors"
-            >
-              <div className="flex items-center space-x-3">
-                <UserAvatar 
-                  user={{
-                    displayName,
-                    photoURL: user.photoURL,
-                    email
-                  }} 
-                  className="h-8 w-8" 
-                />
-                <div>
-                  <p className="font-medium text-sm">{displayName}</p>
-                  <p className="text-xs text-gray-500">{email}</p>
-                </div>
-              </div>
-              <button
-                onClick={() => startChat(user)}
-                disabled={creatingChat}
-                className={`${
-                  creatingChat
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-blue-500 hover:bg-blue-600'
-                } text-white px-3 py-1 text-sm rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors`}
-              >
-                {creatingChat ? 'Creating...' : 'Start Chat'}
-              </button>
-            </div>
-          );
-        })
+      {users.map((user) => (
+        <button
+          key={user.uid}
+          onClick={() => handleCreateChat(user)}
+          className="w-full p-3 flex items-center space-x-3 hover:bg-gray-50 rounded-lg transition-colors"
+        >
+          <UserAvatar
+            user={user}
+            className="h-10 w-10 relative"
+          >
+            {user.online && (
+              <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>
+            )}
+          </UserAvatar>
+          <div className="flex-1 min-w-0">
+            <p className="font-medium truncate">{user.displayName}</p>
+            <p className="text-sm text-gray-500 truncate">
+              {user.online ? (
+                <span className="text-green-500">Online</span>
+              ) : (
+                formatLastSeen(user.lastSeen)
+              )}
+            </p>
+          </div>
+        </button>
+      ))}
+      {users.length === 0 && (
+        <div className="text-center text-gray-500 p-4">
+          No users found
+        </div>
       )}
     </div>
   );

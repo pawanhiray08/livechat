@@ -3,13 +3,16 @@ export interface ChatUser {
   displayName: string;
   photoURL: string | null;
   email: string;
-  lastSeen?: Date;
+  lastSeen?: Date | null;
+  online?: boolean;
 }
 
 interface ParticipantDetails {
   displayName: string;
   photoURL: string | null;
   email: string;
+  lastSeen?: Date | null;
+  online?: boolean;
 }
 
 export interface Chat {
