@@ -73,7 +73,7 @@ export default function ChatSidebar({
     const q = query(
       chatsRef,
       where('participants', 'array-contains', currentUser.uid),
-      orderBy('lastMessageTime', 'desc')
+      orderBy('createdAt', 'desc')
     );
 
     const unsubscribe = onSnapshot(
@@ -127,10 +127,11 @@ export default function ChatSidebar({
                 id: doc.id,
                 participants: data.participants,
                 participantDetails: data.participantDetails,
-                lastMessage: data.lastMessage || '',
+                lastMessage: data.lastMessage || null,
                 lastMessageTime: data.lastMessageTime ? (data.lastMessageTime as Timestamp).toDate() : null,
                 createdAt: data.createdAt ? (data.createdAt as Timestamp).toDate() : new Date(),
                 typingUsers: data.typingUsers || {},
+                draftMessages: data.draftMessages || {},
               };
               chatList.push(chat);
             }

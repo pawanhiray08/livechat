@@ -112,7 +112,10 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
             },
           },
           createdAt: serverTimestamp(),
+          lastMessageTime: serverTimestamp(),
+          lastMessage: null,
           typingUsers: {},
+          draftMessages: {},
         };
 
         console.log('Creating chat with data:', chatData);
