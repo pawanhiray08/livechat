@@ -149,19 +149,27 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
             onClick={() => handleCreateChat(user)}
             className="w-full p-3 flex items-center space-x-3 hover:bg-gray-50 rounded-lg transition-colors"
           >
-            <UserAvatar
-              user={user}
-              className="h-10 w-10 relative"
-            >
+            <div className="relative flex-shrink-0">
+              <UserAvatar
+                user={user}
+                className="h-12 w-12 md:h-10 md:w-10"
+              />
               {user.online && (
                 <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>
               )}
-            </UserAvatar>
-            <div className="flex-1">
-              <div className="font-medium">{user.displayName || user.email}</div>
-              <div className="text-sm text-gray-500">
-                {formatLastSeen(user.lastSeen, user.online)}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex justify-between items-center">
+                <p className="font-medium text-base md:text-sm truncate">
+                  {user.displayName || 'Unknown User'}
+                </p>
               </div>
+              <p className="text-sm text-gray-500 truncate">
+                {user.email}
+              </p>
+              <p className="text-xs text-gray-400 hidden md:block">
+                {formatLastSeen(user.lastSeen, user.online)}
+              </p>
             </div>
           </button>
         ))

@@ -247,12 +247,13 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-white">
+      {/* Chat messages */}
       <div 
         ref={parentRef}
-        className="flex-1 overflow-auto p-4"
+        className="flex-1 overflow-auto p-4 space-y-4"
         style={{ 
-          height: 'calc(100vh - 160px)',
+          height: 'calc(100vh - 80px)',
           position: 'relative'
         }}
       >
@@ -273,22 +274,21 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
                 data-index={virtualRow.index}
                 className={`flex ${isOwnMessage ? 'justify-end' : 'justify-start'}`}
                 style={{
-                  height: `${virtualRow.size}px`,
-                  transform: `translateY(${virtualRow.start}px)`,
                   position: 'absolute',
                   top: 0,
                   left: 0,
                   width: '100%',
+                  transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
                 <div
-                  className={`max-w-[70%] rounded-lg px-4 py-2 ${
+                  className={`max-w-[80%] md:max-w-[70%] rounded-lg px-4 py-2 ${
                     isOwnMessage
                       ? 'bg-blue-500 text-white'
                       : 'bg-gray-100 text-gray-900'
                   }`}
                 >
-                  <p className="break-words">{message.text}</p>
+                  <p className="break-words text-sm md:text-base">{message.text}</p>
                   <p className="text-xs mt-1 opacity-70">
                     {new Date(message.createdAt).toLocaleTimeString([], {
                       hour: '2-digit',
@@ -302,22 +302,46 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
         </div>
       </div>
 
-      <form onSubmit={handleSendMessage} className="p-4 bg-white border-t">
-        <div className="flex space-x-4">
-          <input
-            type="text"
-            value={newMessage}
-            onChange={(e) => {
-              setNewMessage(e.target.value);
-              handleTyping();
-            }}
-            placeholder="Type a message..."
-            className="flex-1 rounded-full border border-gray-300 px-4 py-2 focus:outline-none focus:border-blue-500"
-          />
+      {/* Typing indicator */}
+      {Object.entries(chat?.typingUsers || {})
+        .filter(([uid]) => uid !== currentUser.uid)
+        .map(([uid, isTyping]) => 
+          isTyping && (
+            <div key={uid} className="px-4 py-2 text-sm text-gray-500 italic">
+              {chat?.participantDetails[uid]?.displayName || 'Someone'} is typing...
+            </div>
+          )
+        )}
+
+      {/* Message input */}
+      <form 
+        onSubmit={handleSendMessage} 
+        className="p-4 bg-white border-t border-gray-200 sticky bottom-0"
+      >
+        <div className="flex space-x-2 items-end">
+          <div className="flex-1 min-w-0">
+            <textarea
+              value={newMessage}
+              onChange={(e) => {
+                setNewMessage(e.target.value);
+                handleTyping();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSendMessage(e);
+                }
+              }}
+              placeholder="Type a message..."
+              className="w-full rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2 resize-none text-sm md:text-base"
+              style={{ maxHeight: '120px' }}
+              rows={1}
+            />
+          </div>
           <button
             type="submit"
             disabled={!newMessage.trim()}
-            className="bg-blue-500 text-white rounded-full px-6 py-2 hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="bg-blue-500 text-white rounded-lg px-4 py-2 font-medium hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 text-sm md:text-base"
           >
             Send
           </button>

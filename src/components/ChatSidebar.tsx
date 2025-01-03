@@ -139,84 +139,86 @@ export default function ChatSidebar({
   return (
     <div 
       ref={parentRef} 
-      className="space-y-2 overflow-auto"
-      style={{ height: 'calc(100vh - 100px)' }}
+      className="h-full overflow-auto"
     >
-      {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-        const chat = chats[virtualRow.index];
-        const otherParticipantId = chat.participants.find(
-          (id) => id !== currentUser.uid
-        );
-        const otherParticipant = otherParticipantId ? chat.participantDetails[otherParticipantId] : null;
+      <div className="space-y-2">
+        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+          const chat = chats[virtualRow.index];
+          const otherParticipantId = chat.participants.find(
+            (id) => id !== currentUser.uid
+          );
+          const otherParticipant = otherParticipantId ? chat.participantDetails[otherParticipantId] : null;
 
-        if (!otherParticipant) {
-          console.error('Could not find other participant details for chat:', chat.id);
-          return null;
-        }
+          if (!otherParticipant) {
+            console.error('Could not find other participant details for chat:', chat.id);
+            return null;
+          }
 
-        // Convert Firestore timestamp to Date if it exists
-        const lastSeen = otherParticipant.lastSeen 
-          ? (otherParticipant.lastSeen as unknown as Timestamp).toDate()
-          : null;
+          // Convert Firestore timestamp to Date if it exists
+          const lastSeen = otherParticipant.lastSeen 
+            ? (otherParticipant.lastSeen as unknown as Timestamp).toDate()
+            : null;
 
-        return (
-          <button
-            key={chat.id}
-            data-index={virtualRow.index}
-            ref={rowVirtualizer.measureElement}
-            onClick={() => onChatSelect(chat.id)}
-            className={`w-full text-left p-3 rounded-lg transition-colors ${
-              selectedChatId === chat.id ? 'bg-blue-50' : 'hover:bg-gray-50'
-            }`}
-          >
-            <div className="flex items-center space-x-3">
-              <UserAvatar
-                user={{
-                  displayName: otherParticipant.displayName || 'Unknown User',
-                  photoURL: otherParticipant.photoURL,
-                  email: otherParticipant.email || '',
-                }}
-                className="h-10 w-10"
-              >
-                {otherParticipant.online && (
-                  <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>
-                )}
-              </UserAvatar>
-              <div className="flex-1 min-w-0">
-                <div className="flex justify-between items-baseline">
-                  <p className="font-medium text-sm truncate">
-                    {otherParticipant.displayName || 'Unknown User'}
-                  </p>
-                  {chat.lastMessageTime && (
-                    <span className="text-xs text-gray-400 ml-2">
-                      {new Date(chat.lastMessageTime).toLocaleTimeString([], {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </span>
+          return (
+            <button
+              key={chat.id}
+              data-index={virtualRow.index}
+              ref={rowVirtualizer.measureElement}
+              onClick={() => onChatSelect(chat.id)}
+              className={`w-full text-left p-3 rounded-lg transition-colors ${
+                selectedChatId === chat.id ? 'bg-blue-50' : 'hover:bg-gray-50'
+              }`}
+            >
+              <div className="flex items-center space-x-3">
+                <div className="relative flex-shrink-0">
+                  <UserAvatar
+                    user={{
+                      displayName: otherParticipant.displayName || 'Unknown User',
+                      photoURL: otherParticipant.photoURL,
+                      email: otherParticipant.email || '',
+                    }}
+                    className="h-12 w-12 md:h-10 md:w-10"
+                  />
+                  {otherParticipant.online && (
+                    <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>
                   )}
                 </div>
-                <div className="flex justify-between items-baseline">
-                  <div className="flex-1 min-w-0">
-                    {chat.lastMessage ? (
-                      <p className="text-sm text-gray-500 truncate">
-                        {chat.lastMessage}
-                      </p>
-                    ) : (
-                      <p className="text-sm text-gray-400 italic">
-                        No messages yet
-                      </p>
+                <div className="flex-1 min-w-0">
+                  <div className="flex justify-between items-baseline">
+                    <p className="font-medium text-base md:text-sm truncate">
+                      {otherParticipant.displayName || 'Unknown User'}
+                    </p>
+                    {chat.lastMessageTime && (
+                      <span className="text-xs text-gray-400 ml-2 whitespace-nowrap">
+                        {new Date(chat.lastMessageTime).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
                     )}
                   </div>
-                  <span className="text-xs text-gray-400 ml-2 whitespace-nowrap">
-                    {formatLastSeen(lastSeen, otherParticipant.online)}
-                  </span>
+                  <div className="flex justify-between items-baseline">
+                    <div className="flex-1 min-w-0">
+                      {chat.lastMessage ? (
+                        <p className="text-sm text-gray-500 truncate">
+                          {chat.lastMessage}
+                        </p>
+                      ) : (
+                        <p className="text-sm text-gray-400 italic">
+                          No messages yet
+                        </p>
+                      )}
+                    </div>
+                    <span className="text-xs text-gray-400 ml-2 whitespace-nowrap hidden md:inline">
+                      {formatLastSeen(lastSeen, otherParticipant.online)}
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
-          </button>
-        );
-      })}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
