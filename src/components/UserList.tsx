@@ -66,10 +66,12 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
     );
 
     const snapshot = await getDocs(q);
-    return snapshot.docs.some(doc => {
+    const existingChat = snapshot.docs.find(doc => {
       const participants = doc.data().participants;
       return participants.includes(otherUserId);
     });
+
+    return existingChat ? existingChat.id : null;
   };
 
   const startChat = async (otherUser: ChatUser) => {
@@ -80,10 +82,12 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
       setError('');
       
       // Check if chat exists
-      const chatExists = await checkExistingChat(currentUser.uid, otherUser.uid);
+      const existingChatId = await checkExistingChat(currentUser.uid, otherUser.uid);
       
-      if (chatExists) {
-        setError('Chat already exists with this user');
+      if (existingChatId) {
+        if (onChatCreated) {
+          onChatCreated(existingChatId);
+        }
         return;
       }
 
