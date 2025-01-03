@@ -68,24 +68,34 @@ export default function ChatSidebar({
             (id: string) => id !== currentUser.uid
           );
 
-          // Only add chats that have messages or a lastMessage
+          // Show chats that either:
+          // 1. Have messages (lastMessage and lastMessageTime exist)
+          // 2. Are newly created (only have createdAt)
           if (otherParticipantId && 
               data.participantDetails && 
-              !seenChats.has(doc.id) && 
-              data.lastMessage && 
-              data.lastMessageTime) {
+              !seenChats.has(doc.id)) {
             seenChats.add(doc.id);
             const chat = {
               id: doc.id,
               participants: data.participants,
               participantDetails: data.participantDetails,
               createdAt: data.createdAt ? (data.createdAt as Timestamp).toDate() : new Date(),
-              lastMessageTime: data.lastMessageTime ? (data.lastMessageTime as Timestamp).toDate() : new Date(),
-              lastMessage: data.lastMessage,
+              lastMessageTime: data.lastMessageTime ? (data.lastMessageTime as Timestamp).toDate() : null,
+              lastMessage: data.lastMessage || '',
               typingUsers: data.typingUsers || {},
             };
             chatList.push(chat);
           }
+        });
+
+        // Sort chats: ones with messages first (by lastMessageTime), then new chats (by createdAt)
+        chatList.sort((a, b) => {
+          if (a.lastMessageTime && b.lastMessageTime) {
+            return b.lastMessageTime.getTime() - a.lastMessageTime.getTime();
+          }
+          if (a.lastMessageTime) return -1;
+          if (b.lastMessageTime) return 1;
+          return b.createdAt.getTime() - a.createdAt.getTime();
         });
 
         console.log('Final chat list:', chatList);
@@ -176,9 +186,13 @@ export default function ChatSidebar({
                   )}
                 </div>
                 <div className="flex justify-between items-baseline">
-                  {chat.lastMessage && (
+                  {chat.lastMessage ? (
                     <p className="text-sm text-gray-500 truncate flex-1">
                       {chat.lastMessage}
+                    </p>
+                  ) : (
+                    <p className="text-sm text-gray-400 italic">
+                      No messages yet
                     </p>
                   )}
                   <span className="text-xs text-gray-400 ml-2">

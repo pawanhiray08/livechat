@@ -98,8 +98,6 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
             },
           },
           createdAt: serverTimestamp(),
-          lastMessageTime: serverTimestamp(),
-          lastMessage: '',
           typingUsers: {},
         };
 
