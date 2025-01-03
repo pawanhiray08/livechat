@@ -46,20 +46,23 @@ export default function ChatSidebar({
 
   useEffect(() => {
     // Query chats where the current user is a participant
+    console.log('Fetching chats for user:', currentUser.uid);
     const chatsRef = collection(db, 'chats');
     const q = query(
       chatsRef,
       where('participants', 'array-contains', currentUser.uid),
-      orderBy('lastMessageTime', 'desc'),
+      orderBy('createdAt', 'desc'), // Change to createdAt since we always have this field
       limit(50)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       try {
+        console.log('Got chats snapshot, size:', snapshot.size);
         const chatList: ChatWithId[] = [];
         const seenChats = new Set<string>();
 
         snapshot.forEach((doc) => {
+          console.log('Processing chat doc:', doc.id, doc.data());
           const data = doc.data();
           const otherParticipantId = data.participants.find(
             (id: string) => id !== currentUser.uid
@@ -80,6 +83,7 @@ export default function ChatSidebar({
           }
         });
 
+        console.log('Final chat list:', chatList);
         setChats(chatList);
         setLoading(false);
       } catch (error) {

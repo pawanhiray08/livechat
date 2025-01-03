@@ -67,17 +67,19 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
     try {
       // Create a unique chat ID
       const chatId = [currentUser.uid, otherUser.uid].sort().join('_');
+      console.log('Creating chat with ID:', chatId);
       const chatRef = doc(db, 'chats', chatId);
       const chatDoc = await getDoc(chatRef);
 
       if (!chatDoc.exists()) {
+        console.log('Chat does not exist, creating new chat');
         // Get current user details
         const currentUserRef = doc(db, 'users', currentUser.uid);
         const currentUserDoc = await getDoc(currentUserRef);
         const currentUserData = currentUserDoc.data();
+        console.log('Current user data:', currentUserData);
 
-        // Create new chat
-        await setDoc(chatRef, {
+        const chatData = {
           participants: [currentUser.uid, otherUser.uid],
           participantDetails: {
             [currentUser.uid]: {
@@ -99,11 +101,18 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
           lastMessageTime: serverTimestamp(),
           lastMessage: '',
           typingUsers: {},
-        });
+        };
+
+        console.log('Creating chat with data:', chatData);
+        await setDoc(chatRef, chatData);
+        console.log('Chat created successfully');
+      } else {
+        console.log('Chat already exists');
       }
 
       // Always navigate to the chat, whether it was just created or already existed
       if (onChatCreated) {
+        console.log('Navigating to chat:', chatId);
         onChatCreated(chatId);
       }
     } catch (error) {
