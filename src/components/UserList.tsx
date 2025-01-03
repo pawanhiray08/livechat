@@ -11,21 +11,15 @@ import {
   where,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { UserAvatar } from './UserAvatar';
+import UserAvatar from './UserAvatar';
+import { ChatUser } from '@/types';
 
 interface UserListProps {
   currentUser: User;
 }
 
-interface AppUser {
-  uid: string;
-  email: string;
-  displayName: string;
-  photoURL: string;
-}
-
 export default function UserList({ currentUser }: UserListProps) {
-  const [users, setUsers] = useState<AppUser[]>([]);
+  const [users, setUsers] = useState<ChatUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -36,9 +30,9 @@ export default function UserList({ currentUser }: UserListProps) {
         const q = query(usersRef, where('uid', '!=', currentUser.uid));
         const querySnapshot = await getDocs(q);
         
-        const userList: AppUser[] = [];
+        const userList: ChatUser[] = [];
         querySnapshot.forEach((doc) => {
-          userList.push(doc.data() as AppUser);
+          userList.push(doc.data() as ChatUser);
         });
         
         setUsers(userList);
@@ -53,8 +47,9 @@ export default function UserList({ currentUser }: UserListProps) {
     fetchUsers();
   }, [currentUser.uid]);
 
-  const startChat = async (otherUser: AppUser) => {
+  const startChat = async (otherUser: ChatUser) => {
     try {
+      setError('');
       // Check if chat already exists
       const chatsRef = collection(db, 'chats');
       const chatQuery = query(
@@ -79,8 +74,6 @@ export default function UserList({ currentUser }: UserListProps) {
         createdAt: serverTimestamp(),
         lastMessageTime: serverTimestamp(),
       });
-
-      setError('');
     } catch (error) {
       console.error('Error creating chat:', error);
       setError('Failed to create chat');
@@ -88,38 +81,42 @@ export default function UserList({ currentUser }: UserListProps) {
   };
 
   if (loading) {
-    return <div className="text-center py-4">Loading users...</div>;
-  }
-
-  if (error) {
-    return <div className="text-red-500 text-center py-4">{error}</div>;
+    return (
+      <div className="flex items-center justify-center py-4">
+        <div className="text-gray-500">Loading users...</div>
+      </div>
+    );
   }
 
   return (
-    <div className="p-4">
-      <h2 className="text-xl font-semibold mb-4">All Users</h2>
-      <div className="space-y-2">
-        {users.map((user) => (
+    <div className="space-y-2">
+      {error && (
+        <div className="text-red-500 text-sm text-center py-2">{error}</div>
+      )}
+      {users.length === 0 ? (
+        <div className="text-gray-500 text-center py-4">No other users found</div>
+      ) : (
+        users.map((user) => (
           <div
             key={user.uid}
-            className="flex items-center justify-between p-3 bg-white rounded-lg shadow hover:bg-gray-50 transition-colors"
+            className="flex items-center justify-between p-3 bg-white rounded-lg shadow-sm hover:bg-gray-50 transition-colors"
           >
             <div className="flex items-center space-x-3">
-              <UserAvatar user={user as any} className="h-10 w-10" />
+              <UserAvatar user={user} className="h-8 w-8" />
               <div>
-                <p className="font-medium">{user.displayName}</p>
-                <p className="text-sm text-gray-500">{user.email}</p>
+                <p className="font-medium text-sm">{user.displayName}</p>
+                <p className="text-xs text-gray-500">{user.email}</p>
               </div>
             </div>
             <button
               onClick={() => startChat(user)}
-              className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              className="bg-blue-500 text-white px-3 py-1 text-sm rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
             >
               Start Chat
             </button>
           </div>
-        ))}
-      </div>
+        ))
+      )}
     </div>
   );
 }

@@ -15,13 +15,13 @@ export default function ChatLayout() {
 
   return (
     <div className="flex h-screen">
-      <div className="w-80 flex-shrink-0 border-r border-gray-200">
-        <div className="p-4 border-b border-gray-200">
+      <div className="w-80 flex-shrink-0 border-r border-gray-200 bg-gray-50">
+        <div className="p-4">
           <div className="flex justify-between items-center mb-4">
             <h1 className="text-xl font-semibold">Chats</h1>
             <button
               onClick={() => setShowUsers(!showUsers)}
-              className="text-blue-500 hover:text-blue-600 text-sm"
+              className="text-blue-500 hover:text-blue-600 text-sm font-medium"
             >
               {showUsers ? 'Show Chats' : 'Show Users'}
             </button>
@@ -37,7 +37,7 @@ export default function ChatLayout() {
           )}
         </div>
       </div>
-      <main className="flex-1">
+      <main className="flex-1 bg-white">
         {selectedChatId ? (
           <ChatWindow chatId={selectedChatId} currentUser={user} />
         ) : (
