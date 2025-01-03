@@ -198,25 +198,29 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
   const otherParticipant = chat.participantDetails[otherParticipantId];
 
   return (
-    <div className="flex flex-col h-screen max-h-screen bg-gray-50 w-full">
+    <div className="flex flex-col h-full bg-gray-50">
       {/* Header */}
-      <div className="flex items-center p-4 border-b bg-white shadow-sm">
+      <div className="flex items-center p-3 md:p-4 border-b bg-white shadow-sm">
         <UserAvatar
           user={{
             displayName: otherParticipant.displayName,
             photoURL: otherParticipant.photoURL,
             email: otherParticipant.email,
           }}
-          className="h-10 w-10 md:h-12 md:w-12"
+          className="h-8 w-8 md:h-10 md:w-10"
         />
-        <div className="ml-3">
-          <p className="font-medium text-sm md:text-base">{otherParticipant.displayName}</p>
-          <p className="text-xs md:text-sm text-gray-500">{otherParticipant.email}</p>
+        <div className="ml-3 flex-1 min-w-0">
+          <p className="font-medium text-sm md:text-base truncate">
+            {otherParticipant.displayName}
+          </p>
+          <p className="text-xs md:text-sm text-gray-500 truncate">
+            {otherParticipant.email}
+          </p>
         </div>
       </div>
 
       {/* Messages Container */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
+      <div className="flex-1 overflow-y-auto p-3 md:p-4 space-y-3 md:space-y-4 min-h-0 bg-gray-50">
         {messages.map((message) => {
           const isCurrentUser = message.senderId === currentUser.uid;
           const sender = isCurrentUser
@@ -239,7 +243,7 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
                     photoURL: sender.photoURL,
                     email: sender.email,
                   }}
-                  className="h-8 w-8 hidden md:block"
+                  className="h-6 w-6 md:h-8 md:w-8 hidden md:block"
                 />
                 <div
                   className={`rounded-lg px-3 py-2 md:px-4 md:py-2 break-words ${
@@ -274,10 +278,10 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
                   }}
                   className="h-6 w-6 md:h-8 md:w-8"
                 />
-                <div className="flex flex-col">
-                  <span className="text-xs text-gray-500">{userDetails.displayName} is typing...</span>
+                <div className="flex flex-col flex-1 min-w-0">
+                  <span className="text-xs text-gray-500 truncate">{userDetails.displayName} is typing...</span>
                   {draftMessage && (
-                    <div className="bg-gray-100 text-gray-600 rounded-lg px-3 py-2 mt-1 text-sm italic">
+                    <div className="bg-gray-100 text-gray-600 rounded-lg px-3 py-2 mt-1 text-sm italic break-words">
                       {draftMessage}
                       <div className="typing-indicator inline-flex ml-1">
                         <span></span>
@@ -310,7 +314,7 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
           <button
             type="submit"
             disabled={!newMessage.trim()}
-            className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm md:text-base"
+            className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm md:text-base whitespace-nowrap"
           >
             Send
           </button>
