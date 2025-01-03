@@ -53,6 +53,7 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
   const lastTypingTime = useRef<number>(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const parentRef = useRef<HTMLDivElement>(null);
+  const presenceIntervalRef = useRef<NodeJS.Timeout>();
   const TYPING_TIMER_LENGTH = 3000;
 
   const updateTypingStatus = async (isTyping: boolean) => {
@@ -93,8 +94,7 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
     updatePresence();
 
     // Set up regular presence updates
-    const presenceRef = useRef<NodeJS.Timeout>();
-    presenceRef.current = setInterval(updatePresence, 30000);
+    presenceIntervalRef.current = setInterval(updatePresence, 30000);
 
     // Set up offline status
     const userRef = doc(db, 'users', currentUser.uid);
@@ -111,8 +111,8 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
     window.addEventListener('offline', handleOffline);
 
     return () => {
-      if (presenceRef.current) {
-        clearInterval(presenceRef.current);
+      if (presenceIntervalRef.current) {
+        clearInterval(presenceIntervalRef.current);
       }
       handleOffline();
       window.removeEventListener('beforeunload', handleOffline);
@@ -148,7 +148,7 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
 
   useEffect(() => {
     const messagesRef = collection(db, 'chats', chatId, 'messages');
-    const q = query(messagesRef, orderBy('createdAt', 'desc'), limit(50));
+    const q = query(messagesRef, orderBy('timestamp', 'desc'), limit(50));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const messageList: Message[] = [];
@@ -157,10 +157,12 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
         messageList.push({
           id: doc.id,
           chatId,
-          senderId: data.senderId,
           text: data.text,
-          createdAt: data.createdAt ? (data.createdAt as Timestamp).toDate() : new Date(),
-        });
+          senderId: data.senderId,
+          timestamp: data.timestamp as Timestamp,
+          createdAt: (data.timestamp as Timestamp).toDate(),
+          read: data.read || false,
+        } as Message);
       });
       setMessages(messageList.reverse());
       setLoading(false);
@@ -215,7 +217,7 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
         addDoc(messagesRef, {
           text: messageText,
           senderId: currentUser.uid,
-          createdAt: serverTimestamp(),
+          timestamp: serverTimestamp(),
         }),
         updateDoc(doc(db, 'chats', chatId), {
           lastMessage: messageText,
@@ -240,38 +242,56 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
     <div className="flex flex-col h-full">
       <div 
         ref={parentRef}
-        className="flex-1 overflow-auto p-4 space-y-4"
-        style={{ height: 'calc(100vh - 160px)' }}
+        className="flex-1 overflow-auto p-4"
+        style={{ 
+          height: 'calc(100vh - 160px)',
+          position: 'relative'
+        }}
       >
-        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-          const message = messages[virtualRow.index];
-          const isOwnMessage = message.senderId === currentUser.uid;
-          
-          return (
-            <div
-              key={message.id}
-              data-index={virtualRow.index}
-              ref={rowVirtualizer.measureElement}
-              className={`flex ${isOwnMessage ? 'justify-end' : 'justify-start'}`}
-            >
+        <div
+          style={{
+            height: `${rowVirtualizer.getTotalSize()}px`,
+            width: '100%',
+            position: 'relative'
+          }}
+        >
+          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+            const message = messages[virtualRow.index];
+            const isOwnMessage = message.senderId === currentUser.uid;
+            
+            return (
               <div
-                className={`max-w-[70%] rounded-lg px-4 py-2 ${
-                  isOwnMessage
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-gray-100 text-gray-900'
-                }`}
+                key={message.id}
+                data-index={virtualRow.index}
+                className={`flex ${isOwnMessage ? 'justify-end' : 'justify-start'}`}
+                style={{
+                  height: `${virtualRow.size}px`,
+                  transform: `translateY(${virtualRow.start}px)`,
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                }}
               >
-                <p className="break-words">{message.text}</p>
-                <p className="text-xs mt-1 opacity-70">
-                  {new Date(message.createdAt).toLocaleTimeString([], {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                </p>
+                <div
+                  className={`max-w-[70%] rounded-lg px-4 py-2 ${
+                    isOwnMessage
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-gray-100 text-gray-900'
+                  }`}
+                >
+                  <p className="break-words">{message.text}</p>
+                  <p className="text-xs mt-1 opacity-70">
+                    {new Date(message.createdAt).toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </p>
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
 
       <form onSubmit={handleSendMessage} className="p-4 bg-white border-t">

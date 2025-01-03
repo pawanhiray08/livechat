@@ -11,9 +11,11 @@ export interface ChatUser {
 
 export interface Message {
   id: string;
+  chatId: string;
   text: string;
   senderId: string;
   timestamp: Timestamp;
+  createdAt: Date;
   read?: boolean;
 }
 
