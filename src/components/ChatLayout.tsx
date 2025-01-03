@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import ChatSidebar from './ChatSidebar';
 import ChatWindow from './ChatWindow';
@@ -8,8 +8,23 @@ import UserList from './UserList';
 
 export default function ChatLayout() {
   const { user } = useAuth();
-  const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
+  const [selectedChatId, setSelectedChatId] = useState<string | null>(() => {
+    // Try to get the saved chat ID from localStorage
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('selectedChatId');
+    }
+    return null;
+  });
   const [showUsers, setShowUsers] = useState(false);
+
+  // Save selectedChatId to localStorage whenever it changes
+  useEffect(() => {
+    if (selectedChatId) {
+      localStorage.setItem('selectedChatId', selectedChatId);
+    } else {
+      localStorage.removeItem('selectedChatId');
+    }
+  }, [selectedChatId]);
 
   if (!user) return null;
 
