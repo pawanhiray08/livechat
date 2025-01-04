@@ -7,7 +7,32 @@ export function middleware(request: NextRequest) {
   // Remove any existing security headers to prevent conflicts
   response.headers.delete('Content-Security-Policy')
   response.headers.delete('Content-Security-Policy-Report-Only')
-  response.headers.delete('X-Frame-Options')
+
+  // Add security headers
+  const ContentSecurityPolicy = `
+    default-src 'self';
+    script-src 'self' 'unsafe-eval' 'unsafe-inline' https://*.firebaseapp.com https://*.firebase.com https://*.googleapis.com https://*.google.com https://*.gstatic.com;
+    style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+    font-src 'self' https://fonts.gstatic.com;
+    img-src 'self' blob: data: https://*.googleusercontent.com;
+    frame-src 'self' https://*.firebaseapp.com https://*.firebase.com;
+    connect-src 'self' 
+      https://*.firebaseapp.com 
+      https://*.firebase.com 
+      wss://*.firebaseio.com 
+      https://*.googleapis.com 
+      https://*.google.com
+      https://*.vercel.app;
+    object-src 'none';
+    base-uri 'self';
+    form-action 'self';
+    upgrade-insecure-requests;
+  `
+
+  response.headers.set(
+    'Content-Security-Policy',
+    ContentSecurityPolicy.replace(/\s{2,}/g, ' ').trim()
+  )
 
   return response
 }

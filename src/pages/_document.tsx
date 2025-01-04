@@ -9,6 +9,9 @@ function Document(props: DocumentProps) {
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5" />
         <meta name="description" content="Real-time chat application with instant messaging capabilities" />
         <meta name="theme-color" content="#000000" />
+        <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+        <meta httpEquiv="Content-Security-Policy" content="upgrade-insecure-requests" />
+        
         <link rel="icon" href="/favicon.ico" />
         
         {/* Preload critical resources */}
