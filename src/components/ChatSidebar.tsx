@@ -14,7 +14,8 @@ import {
   doc,
   setDoc,
   serverTimestamp,
-  DocumentReference
+  DocumentReference,
+  getDoc
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import UserAvatar from './UserAvatar';
@@ -72,7 +73,6 @@ export default function ChatSidebar({
   const [chats, setChats] = useState<Chat[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [retryCount, setRetryCount] = useState(0);
   const parentRef = useRef<HTMLDivElement>(null);
 
   const rowVirtualizer = useVirtualizer({
@@ -88,14 +88,12 @@ export default function ChatSidebar({
       return;
     }
 
-    let unsubscribe: (() => void) | null = null;
-
     try {
       setLoading(true);
       setError(null);
 
       // First verify Firestore connection and update user status
-      const userRef: DocumentReference = doc(db, 'users', currentUser.uid);
+      const userRef = doc(db, 'users', currentUser.uid);
       await setDoc(userRef, {
         uid: currentUser.uid,
         email: currentUser.email,
@@ -103,7 +101,7 @@ export default function ChatSidebar({
         photoURL: currentUser.photoURL,
         lastSeen: serverTimestamp(),
         online: true,
-      }, { merge: true }); // Use merge to preserve existing data
+      }, { merge: true });
 
       const chatsRef = collection(db, 'chats');
       const q = query(
@@ -113,137 +111,112 @@ export default function ChatSidebar({
         limit(50)
       );
 
-      unsubscribe = (await loadChats()) || null;
+      // Set up real-time listener
+      const unsubscribe = onSnapshot(q, async (snapshot) => {
+        try {
+          const chatList: Chat[] = [];
+          
+          // Process all chats in parallel
+          await Promise.all(snapshot.docs.map(async (doc) => {
+            const data = doc.data();
+            if (!data || !data.participants) {
+              console.warn(`Invalid chat data for ${doc.id}:`, data);
+              return;
+            }
 
-      unsubscribe = onSnapshot(
-        q,
-        async (snapshot) => {
-          try {
-            const chatList: Chat[] = [];
-            
-            // Process all chats in parallel
-            await Promise.all(snapshot.docs.map(async (doc) => {
-              const data = doc.data();
-              if (!data || !data.participants) {
-                console.warn(`Invalid chat data for ${doc.id}:`, data);
-                return;
-              }
-
-              // Get other participant's details if not already in the chat data
-              const otherParticipantId = data.participants.find((id: string) => id !== currentUser.uid);
-              if (otherParticipantId && (!data.participantDetails || !data.participantDetails[otherParticipantId])) {
-                try {
-                  const usersRef = collection(db, 'users');
-                  const q = query(usersRef, where('uid', '==', otherParticipantId), limit(1));
-                  const querySnapshot = await getDocs(q);
-                  
-                  if (!querySnapshot.empty) {
-                    const userDoc = querySnapshot.docs[0];
-                    const firestoreData = userDoc.data() as FirestoreUserData;
-                    const userData: UserData = {
-                      displayName: firestoreData.displayName || 'Anonymous User',
-                      photoURL: firestoreData.photoURL || null,
-                      email: firestoreData.email || '',
-                      lastSeen: firestoreData.lastSeen || Timestamp.now(),
-                      online: firestoreData.online || false,
-                    };
-                    data.participantDetails = {
-                      ...data.participantDetails,
-                      [otherParticipantId]: userData,
-                    };
-                  }
-                } catch (err) {
-                  console.error(`Error fetching user ${otherParticipantId}:`, err);
+            // Get other participant's details if not already in the chat data
+            const otherParticipantId = data.participants.find((id: string) => id !== currentUser.uid);
+            if (otherParticipantId && (!data.participantDetails || !data.participantDetails[otherParticipantId])) {
+              try {
+                const userDoc = await getDoc(doc(db, 'users', otherParticipantId));
+                if (userDoc.exists()) {
+                  const firestoreData = userDoc.data();
+                  const userData: UserData = {
+                    displayName: firestoreData.displayName || 'Anonymous User',
+                    photoURL: firestoreData.photoURL || null,
+                    email: firestoreData.email || '',
+                    lastSeen: firestoreData.lastSeen || Timestamp.now(),
+                    online: firestoreData.online || false,
+                  };
+                  data.participantDetails = {
+                    ...data.participantDetails,
+                    [otherParticipantId]: userData,
+                  };
                 }
+              } catch (err) {
+                console.error(`Error fetching user ${otherParticipantId}:`, err);
               }
+            }
 
-              // Convert timestamps to dates
-              const createdAt = data.createdAt?.toDate?.() || new Date();
-              const lastMessageTime = data.lastMessageTime?.toDate?.() || null;
-              const lastMessageTimestamp = data.lastMessage?.timestamp;
+            // Convert timestamps to dates
+            const createdAt = data.createdAt?.toDate?.() || new Date();
+            const lastMessageTime = data.lastMessageTime?.toDate?.() || createdAt;
 
-              const chat: Chat = {
-                id: doc.id,
-                participants: data.participants,
-                participantDetails: data.participantDetails || {},
-                createdAt,
-                lastMessageTime,
-                lastMessage: data.lastMessage ? {
-                  text: data.lastMessage.text || '',
-                  senderId: data.lastMessage.senderId || '',
-                  timestamp: lastMessageTimestamp,
-                } : undefined,
-                typingUsers: data.typingUsers || {},
-                draftMessages: data.draftMessages || {},
-              };
+            const chat: Chat = {
+              id: doc.id,
+              participants: data.participants,
+              participantDetails: data.participantDetails || {},
+              createdAt,
+              lastMessageTime,
+              lastMessage: data.lastMessage ? {
+                text: data.lastMessage.text || '',
+                senderId: data.lastMessage.senderId || '',
+                timestamp: data.lastMessage.timestamp,
+              } : undefined,
+              typingUsers: data.typingUsers || {},
+              draftMessages: data.draftMessages || {},
+            };
 
-              chatList.push(chat);
-            }));
+            chatList.push(chat);
+          }));
 
-            // Sort chats by last message time
-            chatList.sort((a, b) => {
-              const timeA = a.lastMessageTime?.getTime() || a.createdAt.getTime();
-              const timeB = b.lastMessageTime?.getTime() || b.createdAt.getTime();
-              return timeB - timeA;
-            });
+          // Sort chats by last message time
+          chatList.sort((a, b) => {
+            const timeA = a.lastMessageTime?.getTime() || a.createdAt.getTime();
+            const timeB = b.lastMessageTime?.getTime() || b.createdAt.getTime();
+            return timeB - timeA;
+          });
 
-            console.log('Loaded chats:', chatList.length);
-            setChats(chatList);
-            setLoading(false);
-            setError(null);
-          } catch (err) {
-            console.error('Error processing chats:', err);
-            setError('Error processing chats. Please try again.');
-            setLoading(false);
-          }
-        },
-        (error) => {
-          console.error('Error in chat subscription:', error);
-          if (error.message.includes('requires an index')) {
-            setError('Chat index is being created. Please wait a few minutes and try again.');
-          } else {
-            setError('Failed to load chats. Please try again.');
-          }
+          setChats(chatList);
+          setLoading(false);
+          setError(null);
+        } catch (err) {
+          console.error('Error processing chats:', err);
+          setError('Error loading chats. Please try again.');
           setLoading(false);
         }
-      );
+      }, (error) => {
+        console.error('Error in chat subscription:', error);
+        setError('Failed to load chats. Please check your connection.');
+        setLoading(false);
+      });
 
-      return unsubscribe;
-    } catch (error) {
-      console.error('Error setting up chat listener:', error);
-      setError('Failed to initialize chat listener. Please try again.');
+      return () => {
+        unsubscribe();
+      };
+    } catch (err) {
+      console.error('Error in loadChats:', err);
+      setError('Failed to initialize chat loading. Please refresh the page.');
       setLoading(false);
     }
-  }, [currentUser?.uid]);
+  }, [currentUser]);
 
+  // Set up chat listener
   useEffect(() => {
-    let unsubscribe: (() => void) | null = null;
-
-    const initializeChats = async () => {
-      try {
-        if (unsubscribe) {
-          unsubscribe();
-        }
-        unsubscribe = (await loadChats()) || null;
-      } catch (err) {
-        console.error('Error initializing chats:', err);
-        setError('Failed to initialize chats. Please try again.');
-        setLoading(false);
-      }
+    let unsubscribe: (() => void) | undefined;
+    
+    const setupChats = async () => {
+      unsubscribe = await loadChats();
     };
 
-    initializeChats();
+    setupChats();
 
     return () => {
       if (unsubscribe) {
         unsubscribe();
       }
     };
-  }, [loadChats, retryCount]);
-
-  const handleRetry = useCallback(() => {
-    setRetryCount(count => count + 1);
-  }, []);
+  }, [loadChats]);
 
   if (loading) {
     return (
@@ -281,7 +254,7 @@ export default function ChatSidebar({
           <div className="text-center">
             <p className="text-red-500 mb-4">{error}</p>
             <button
-              onClick={handleRetry}
+              onClick={() => window.location.reload()}
               className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
             >
               Retry
