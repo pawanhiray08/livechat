@@ -5,7 +5,7 @@ import Image from 'next/image';
 interface UserAvatarProps {
   user: {
     photoURL: string | null;
-    displayName: string;
+    displayName: string | null;
   };
   size?: number;
   className?: string;
@@ -28,7 +28,7 @@ export default function UserAvatar({ user, size = 40, className = '' }: UserAvat
       >
         <Image
           src={user.photoURL}
-          alt={user.displayName}
+          alt={user.displayName || 'User Avatar'}
           className="object-cover"
           fill
           sizes={`${size}px`}

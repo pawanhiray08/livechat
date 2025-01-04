@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { User } from 'firebase/auth';
-import {
+import { 
   collection,
   query,
   where,
@@ -10,14 +10,14 @@ import {
   onSnapshot,
   Timestamp,
   limit,
+  getDocs,
   doc,
-  getDoc,
   setDoc,
   serverTimestamp,
+  DocumentReference
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import UserAvatar from './UserAvatar';
-import { Chat } from '@/types';
 import { formatLastSeen } from '@/utils/time';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
@@ -28,6 +28,37 @@ interface ChatSidebarProps {
   onShowSettings: () => void;
   onShowSearch: () => void;
   onShowUsers: () => void;
+}
+
+interface UserData {
+  displayName: string;
+  photoURL: string | null;
+  email: string;
+  lastSeen: Timestamp;
+  online: boolean;
+}
+
+interface FirestoreUserData {
+  displayName?: string;
+  photoURL?: string;
+  email?: string;
+  lastSeen?: Timestamp;
+  online?: boolean;
+}
+
+interface Chat {
+  id: string;
+  participants: string[];
+  participantDetails: { [key: string]: UserData };
+  createdAt: Date;
+  lastMessageTime?: Date;
+  lastMessage?: {
+    text?: string;
+    senderId?: string;
+    timestamp?: Timestamp;
+  };
+  typingUsers?: { [key: string]: boolean };
+  draftMessages?: { [key: string]: string };
 }
 
 export default function ChatSidebar({
@@ -57,12 +88,14 @@ export default function ChatSidebar({
       return;
     }
 
+    let unsubscribe: (() => void) | null = null;
+
     try {
       setLoading(true);
       setError(null);
 
       // First verify Firestore connection and update user status
-      const userRef = doc(db, 'users', currentUser.uid);
+      const userRef: DocumentReference = doc(db, 'users', currentUser.uid);
       await setDoc(userRef, {
         uid: currentUser.uid,
         email: currentUser.email,
@@ -80,7 +113,9 @@ export default function ChatSidebar({
         limit(50)
       );
 
-      return onSnapshot(
+      unsubscribe = (await loadChats()) || null;
+
+      unsubscribe = onSnapshot(
         q,
         async (snapshot) => {
           try {
@@ -98,18 +133,23 @@ export default function ChatSidebar({
               const otherParticipantId = data.participants.find((id: string) => id !== currentUser.uid);
               if (otherParticipantId && (!data.participantDetails || !data.participantDetails[otherParticipantId])) {
                 try {
-                  const userDoc = await getDoc(doc(db, 'users', otherParticipantId));
-                  if (userDoc.exists()) {
-                    const userData = userDoc.data();
+                  const usersRef = collection(db, 'users');
+                  const q = query(usersRef, where('uid', '==', otherParticipantId), limit(1));
+                  const querySnapshot = await getDocs(q);
+                  
+                  if (!querySnapshot.empty) {
+                    const userDoc = querySnapshot.docs[0];
+                    const firestoreData = userDoc.data() as FirestoreUserData;
+                    const userData: UserData = {
+                      displayName: firestoreData.displayName || 'Anonymous User',
+                      photoURL: firestoreData.photoURL || null,
+                      email: firestoreData.email || '',
+                      lastSeen: firestoreData.lastSeen || Timestamp.now(),
+                      online: firestoreData.online || false,
+                    };
                     data.participantDetails = {
                       ...data.participantDetails,
-                      [otherParticipantId]: {
-                        displayName: userData.displayName || 'Anonymous User',
-                        photoURL: userData.photoURL,
-                        email: userData.email,
-                        lastSeen: userData.lastSeen,
-                        online: userData.online || false,
-                      },
+                      [otherParticipantId]: userData,
                     };
                   }
                 } catch (err) {
@@ -132,7 +172,7 @@ export default function ChatSidebar({
                   text: data.lastMessage.text || '',
                   senderId: data.lastMessage.senderId || '',
                   timestamp: lastMessageTimestamp,
-                } : null,
+                } : undefined,
                 typingUsers: data.typingUsers || {},
                 draftMessages: data.draftMessages || {},
               };
@@ -157,19 +197,24 @@ export default function ChatSidebar({
             setLoading(false);
           }
         },
-        (err) => {
-          console.error('Error in chat subscription:', err);
-          setError('Failed to load chats. Please check your connection.');
+        (error) => {
+          console.error('Error in chat subscription:', error);
+          if (error.message.includes('requires an index')) {
+            setError('Chat index is being created. Please wait a few minutes and try again.');
+          } else {
+            setError('Failed to load chats. Please try again.');
+          }
           setLoading(false);
         }
       );
-    } catch (err) {
-      console.error('Error setting up chat listener:', err);
-      setError('Failed to load chats. Please check your connection.');
+
+      return unsubscribe;
+    } catch (error) {
+      console.error('Error setting up chat listener:', error);
+      setError('Failed to initialize chat listener. Please try again.');
       setLoading(false);
-      return null;
     }
-  }, [currentUser?.uid, currentUser?.email, currentUser?.displayName, currentUser?.photoURL]);
+  }, [currentUser?.uid]);
 
   useEffect(() => {
     let unsubscribe: (() => void) | null = null;
@@ -179,7 +224,7 @@ export default function ChatSidebar({
         if (unsubscribe) {
           unsubscribe();
         }
-        unsubscribe = await loadChats();
+        unsubscribe = (await loadChats()) || null;
       } catch (err) {
         console.error('Error initializing chats:', err);
         setError('Failed to initialize chats. Please try again.');
@@ -191,11 +236,7 @@ export default function ChatSidebar({
 
     return () => {
       if (unsubscribe) {
-        try {
-          unsubscribe();
-        } catch (err) {
-          console.error('Error unsubscribing from chats:', err);
-        }
+        unsubscribe();
       }
     };
   }, [loadChats, retryCount]);
@@ -302,7 +343,7 @@ export default function ChatSidebar({
             size={40}
           />
           <div>
-            <h2 className="text-lg font-semibold">{currentUser.displayName || 'Anonymous User'}</h2>
+            <h2 className="text-lg font-semibold">{currentUser.displayName ?? 'Anonymous User'}</h2>
             <p className="text-sm text-gray-500">{currentUser.email}</p>
           </div>
         </div>
@@ -381,13 +422,12 @@ export default function ChatSidebar({
                       )}
                     </div>
                     <p className="text-sm text-gray-500 truncate">
-                      {chat.lastMessage ? (
+                      {chat.lastMessage && typeof chat.lastMessage === 'object' && chat.lastMessage.text ? (
                         <>
-                          {chat.lastMessage.senderId === currentUser.uid ? 'You: ' : ''}
                           {chat.lastMessage.text}
                         </>
                       ) : (
-                        'No messages yet'
+                        'No message'
                       )}
                     </p>
                   </div>

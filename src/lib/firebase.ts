@@ -1,6 +1,6 @@
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, initializeFirestore, enableIndexedDbPersistence } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
@@ -18,23 +18,15 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0
 
 // Initialize services
 const auth = getAuth(app);
-const db = getFirestore(app);
+let db;
 const storage = getStorage(app);
 
 // Enable offline persistence
 const initializeFirebase = async () => {
   try {
-    const { enableIndexedDbPersistence } = await import('firebase/firestore');
-    try {
-      await enableIndexedDbPersistence(db);
-      console.log('Offline persistence enabled');
-    } catch (err) {
-      if ((err as Error).message.includes('already been called')) {
-        console.log('Persistence already enabled');
-      } else {
-        console.error('Error enabling persistence:', err);
-      }
-    }
+    db = initializeFirestore(app, { experimentalForceLongPolling: true });
+    await enableIndexedDbPersistence(db);
+    console.log('Offline persistence enabled');
   } catch (err) {
     console.error('Error initializing Firebase:', err);
   }
