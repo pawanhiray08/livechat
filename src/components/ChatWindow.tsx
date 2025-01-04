@@ -168,6 +168,20 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     };
   }, [chatId, currentUser?.uid]);
 
+  // Update typing status in Firestore
+  const updateTypingStatus = useCallback(async (isTyping: boolean) => {
+    if (!currentUser?.uid || !chatId) return;
+    
+    const chatRef = doc(db, 'chats', chatId);
+    try {
+      await updateDoc(chatRef, {
+        [`typingUsers.${currentUser.uid}`]: isTyping
+      });
+    } catch (error) {
+      console.error('Error updating typing status:', error);
+    }
+  }, [chatId, currentUser?.uid]);
+
   // Handle typing status updates
   const handleTyping = useCallback(() => {
     if (!isTyping) {
@@ -187,20 +201,6 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
 
     setTimeout(checkTypingTimeout, TYPING_TIMER_LENGTH);
   }, [isTyping, updateTypingStatus]);
-
-  // Update typing status in Firestore
-  const updateTypingStatus = async (isTyping: boolean) => {
-    if (!currentUser?.uid || !chatId) return;
-    
-    const chatRef = doc(db, 'chats', chatId);
-    try {
-      await updateDoc(chatRef, {
-        [`typingUsers.${currentUser.uid}`]: isTyping
-      });
-    } catch (error) {
-      console.error('Error updating typing status:', error);
-    }
-  };
 
   // Create virtualizer for messages
   const rowVirtualizer = useVirtualizer({
