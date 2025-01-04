@@ -8,6 +8,7 @@ function Document(props: DocumentProps) {
   const cspValue = `
     default-src 'self';
     script-src 'self' 'unsafe-eval' 'nonce-${nonce}';
+    script-src-elem 'self' 'unsafe-inline' https: http:;
     style-src 'self' 'unsafe-inline';
     img-src 'self' blob: data: https://*.googleapis.com https://*.googleusercontent.com;
     font-src 'self' data: https://fonts.gstatic.com;
