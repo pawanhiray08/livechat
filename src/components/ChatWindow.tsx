@@ -51,9 +51,10 @@ interface MessageWithId extends Message {
 interface ChatWindowProps {
   chatId: string;
   currentUser: User;
+  onBack?: () => void;
 }
 
-export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
+export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [chat, setChat] = useState<Chat | null>(null);
   const [loading, setLoading] = useState(true);
@@ -312,6 +313,45 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
 
   return (
     <div className="flex flex-col h-full bg-white">
+      {/* Chat header */}
+      <div className="p-4 border-b border-gray-200">
+        <div className="flex items-center space-x-4">
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="p-2 -ml-2 hover:bg-gray-100 rounded-full md:hidden"
+              title="Back to Chats"
+            >
+              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+          )}
+          {chat && (
+            <>
+              <UserAvatar
+                user={{
+                  photoURL: chat.participantDetails[otherParticipantId]?.photoURL || null,
+                  displayName: chat.participantDetails[otherParticipantId]?.displayName || 'Unknown User'
+                }}
+                className="h-10 w-10"
+              />
+              <div>
+                <h2 className="text-lg font-semibold">
+                  {chat.participantDetails[otherParticipantId]?.displayName || 'Unknown User'}
+                </h2>
+                <p className="text-sm text-gray-500">
+                  {formatLastSeen(
+                    chat.participantDetails[otherParticipantId]?.lastSeen || null,
+                    chat.participantDetails[otherParticipantId]?.online
+                  )}
+                </p>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
       {/* Chat messages */}
       <div 
         ref={parentRef}
