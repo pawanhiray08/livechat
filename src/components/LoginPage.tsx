@@ -16,7 +16,15 @@ export default function LoginPage() {
     try {
       setIsLoading(true);
       setError(null);
+      
+      // Add a timeout to reset the loading state if something goes wrong
+      const timeoutId = setTimeout(() => {
+        setIsLoading(false);
+        setError('Sign in took too long. Please try again.');
+      }, 35000);
+      
       await signInWithGoogle();
+      clearTimeout(timeoutId);
       console.log('Sign in successful');
     } catch (err: any) {
       console.error('Sign in error:', err);

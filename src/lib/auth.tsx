@@ -78,9 +78,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signInWithGoogle = async () => {
     try {
       const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(auth, provider);
+      // Add timeout to the sign-in process
+      const signInPromise = signInWithPopup(auth, provider);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Sign in timeout. Please try again.')), 30000)
+      );
       
-      if (result.user) {
+      const result = await Promise.race([signInPromise, timeoutPromise]);
+      
+      if ('user' in result && result.user) {
         const userRef = doc(db, 'users', result.user.uid);
         await setDoc(userRef, {
           uid: result.user.uid,
@@ -91,9 +97,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           online: true,
         }, { merge: true });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error signing in with Google:', error);
-      throw error;
+      // Add more specific error messages
+      if (error.code === 'auth/popup-closed-by-user') {
+        throw new Error('Sign-in cancelled. Please try again.');
+      } else if (error.code === 'auth/popup-blocked') {
+        throw new Error('Pop-up blocked by browser. Please enable pop-ups and try again.');
+      } else if (error.message === 'Sign in timeout. Please try again.') {
+        throw error;
+      } else {
+        throw new Error('Failed to sign in. Please try again later.');
+      }
     }
   };
 
