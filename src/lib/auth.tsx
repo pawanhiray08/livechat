@@ -1,10 +1,8 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
-import { auth, db } from './firebase';
-import { GoogleAuthProvider } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
+import { onAuthStateChanged, signInWithPopup, signOut, GoogleAuthProvider } from 'firebase/auth';
+import { auth } from './firebase';
 
 export interface User {
   uid: string;
@@ -32,67 +30,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         const { uid, email, displayName, photoURL } = user;
         setUser({ uid, email, displayName, photoURL });
-        
-        // Update user document
-        const userRef = doc(db, 'users', uid);
-        await setDoc(userRef, {
-          email,
-          displayName,
-          photoURL,
-          lastSeen: new Date(),
-        }, { merge: true });
       } else {
         setUser(null);
       }
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    return unsubscribe;
   }, []);
 
   const signInWithGoogle = async () => {
+    const provider = new GoogleAuthProvider();
     try {
-      const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(auth, provider);
-      const { uid, email, displayName, photoURL } = result.user;
-      
-      // Create/update user document
-      const userRef = doc(db, 'users', uid);
-      await setDoc(userRef, {
-        email,
-        displayName,
-        photoURL,
-        lastSeen: new Date(),
-      }, { merge: true });
-    } catch (error) {
-      console.error('Error signing in with Google:', error);
+      await signInWithPopup(auth, provider);
+    } catch (error: any) {
+      console.error('Google sign in error:', error);
+      throw new Error(error.message);
     }
   };
 
   const logout = async () => {
     try {
-      if (user) {
-        const userRef = doc(db, 'users', user.uid);
-        await setDoc(userRef, {
-          online: false,
-          lastSeen: new Date(),
-        }, { merge: true });
-      }
       await signOut(auth);
-    } catch (error) {
-      console.error('Error signing out:', error);
+    } catch (error: any) {
+      console.error('Logout error:', error);
+      throw new Error(error.message);
     }
   };
 
   return (
     <AuthContext.Provider value={{ user, loading, signInWithGoogle, logout }}>
-      {!loading && children}
+      {children}
     </AuthContext.Provider>
   );
 }
 
-export const useAuth = () => useContext(AuthContext);
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};

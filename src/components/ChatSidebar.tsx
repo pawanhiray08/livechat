@@ -45,6 +45,7 @@ interface ChatSidebarProps {
   onChatSelect: (chatId: string) => void;
   onShowSettings: () => void;
   onShowSearch: () => void;
+  onShowUsers: () => void;
 }
 
 interface ChatWithId extends Chat {
@@ -57,6 +58,7 @@ export default function ChatSidebar({
   onChatSelect,
   onShowSettings,
   onShowSearch,
+  onShowUsers,
 }: ChatSidebarProps) {
   const [chats, setChats] = useState<Chat[]>([]);
   const [loading, setLoading] = useState(true);
@@ -71,233 +73,280 @@ export default function ChatSidebar({
   });
 
   useEffect(() => {
-    if (!currentUser?.uid) return;
+    console.log('Setting up chat listener for user:', currentUser?.uid);
+    if (!currentUser?.uid) {
+      console.log('No user ID available');
+      setLoading(false);
+      return;
+    }
 
-    const chatsRef = collection(db, 'chats');
-    const q = query(
-      chatsRef,
-      where('participants', 'array-contains', currentUser.uid),
-      orderBy('createdAt', 'desc')
-    );
+    setLoading(true);
+    setError(null);
 
-    const unsubscribe = onSnapshot(
-      q,
-      async (snapshot) => {
-        console.log('Fetching chats...');
-        const chatList: Chat[] = [];
-        const seenChats = new Set<string>();
+    try {
+      const chatsRef = collection(db, 'chats');
+      const q = query(
+        chatsRef,
+        where('participants', 'array-contains', currentUser.uid),
+        orderBy('lastMessageTime', 'desc'),
+        limit(50)
+      );
 
-        for (const chatDoc of snapshot.docs) {
-          const chatData = chatDoc.data() as DocumentData;
-          console.log('Chat data:', chatData);
+      console.log('Subscribing to chat updates...');
+      const unsubscribe = onSnapshot(
+        q,
+        async (snapshot) => {
+          try {
+            console.log('Received chat update, docs count:', snapshot.docs.length);
+            const chatList: Chat[] = [];
 
-          const otherParticipantId = chatData.participants.find(
-            (id: string) => id !== currentUser.uid
-          );
+            for (const doc of snapshot.docs) {
+              const data = doc.data();
+              console.log('Processing chat:', doc.id, data);
 
-          if (otherParticipantId && !seenChats.has(chatDoc.id)) {
-            // Fetch participant details if not present
-            if (!chatData.participantDetails || !chatData.participantDetails[otherParticipantId]) {
-              try {
-                const userDocRef = doc(db, 'users', otherParticipantId);
-                const userDocSnapshot = await getDoc(userDocRef);
-                if (userDocSnapshot.exists()) {
-                  const userData = userDocSnapshot.data() as FirestoreUser;
-                  const typedUserData: FirebaseUser = {
-                    uid: otherParticipantId,
-                    displayName: userData.displayName || '',
-                    photoURL: userData.photoURL || '',
-                    email: userData.email || '',
-                    lastSeen: userData.lastSeen || null,
-                    online: userData.online || false
-                  };
-                  chatData.participantDetails = {
-                    ...chatData.participantDetails,
-                    [otherParticipantId]: typedUserData
-                  };
-                  // Update the chat document with participant details
-                  await updateDoc(doc(db, 'chats', chatDoc.ref.id), {
-                    participantDetails: chatData.participantDetails,
-                  });
-                }
-              } catch (error) {
-                console.error('Error fetching participant details:', error);
-              }
+              chatList.push({
+                id: doc.id,
+                participants: data.participants || [],
+                lastMessage: data.lastMessage || null,
+                lastMessageTime: data.lastMessageTime || null,
+                typingUsers: data.typingUsers || [],
+                participantDetails: data.participantDetails || {}
+              });
             }
 
-            if (chatData.participantDetails?.[otherParticipantId]) {
-              seenChats.add(chatDoc.id);
-              const chat = {
-                id: chatDoc.id,
-                participants: chatData.participants,
-                participantDetails: chatData.participantDetails,
-                lastMessage: chatData.lastMessage || null,
-                lastMessageTime: chatData.lastMessageTime ? (chatData.lastMessageTime as Timestamp).toDate() : null,
-                createdAt: chatData.createdAt ? (chatData.createdAt as Timestamp).toDate() : new Date(),
-                typingUsers: chatData.typingUsers || {},
-                draftMessages: chatData.draftMessages || {},
-              };
-              chatList.push(chat);
-            }
+            console.log('Setting chats:', chatList.length);
+            setChats(chatList);
+            setLoading(false);
+          } catch (err) {
+            console.error('Error processing chat data:', err);
+            setError('Error processing chat data');
+            setLoading(false);
           }
+        },
+        (err) => {
+          console.error('Firestore subscription error:', err);
+          setError('Failed to load chats');
+          setLoading(false);
         }
+      );
 
-        console.log('Final chat list:', chatList);
-        setChats(chatList);
-        setLoading(false);
-      },
-      (error) => {
-        console.error('Error fetching chats:', error);
-        setError('Failed to load chats');
-        setLoading(false);
-      }
-    );
-
-    return () => unsubscribe();
+      return () => {
+        console.log('Cleaning up chat subscription');
+        unsubscribe();
+      };
+    } catch (err) {
+      console.error('Error setting up chat listener:', err);
+      setError('Failed to set up chat listener');
+      setLoading(false);
+    }
   }, [currentUser?.uid]);
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+      <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
+        <div className="p-4 flex justify-between items-center border-b border-gray-200">
+          <h2 className="text-xl font-semibold">Chats</h2>
+          <div className="flex space-x-2">
+            <button
+              onClick={onShowUsers}
+              className="p-2 hover:bg-gray-100 rounded-full"
+              title="Find Users"
+            >
+              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+            </button>
+            <button
+              onClick={onShowSettings}
+              className="p-2 hover:bg-gray-100 rounded-full"
+              title="Settings"
+            >
+              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 p-4">
+          <div className="space-y-4">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="animate-pulse flex items-center space-x-4">
+                <div className="rounded-full bg-gray-200 h-12 w-12"></div>
+                <div className="flex-1 space-y-2">
+                  <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+                  <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="text-center text-red-500 p-4">
-        {error}
+      <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
+        <div className="p-4 flex justify-between items-center border-b border-gray-200">
+          <h2 className="text-xl font-semibold">Chats</h2>
+          <div className="flex space-x-2">
+            <button
+              onClick={onShowUsers}
+              className="p-2 hover:bg-gray-100 rounded-full"
+              title="Find Users"
+            >
+              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+            </button>
+            <button
+              onClick={onShowSettings}
+              className="p-2 hover:bg-gray-100 rounded-full"
+              title="Settings"
+            >
+              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 flex items-center justify-center p-4">
+          <div className="text-center">
+            <p className="text-red-500 mb-4">{error}</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
 
   if (chats.length === 0) {
     return (
-      <div className="text-center text-gray-500 p-4">
-        No chats yet. Start a new conversation!
+      <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
+        <div className="p-4 flex justify-between items-center border-b border-gray-200">
+          <h2 className="text-xl font-semibold">Chats</h2>
+          <div className="flex space-x-2">
+            <button
+              onClick={onShowUsers}
+              className="p-2 hover:bg-gray-100 rounded-full"
+              title="Find Users"
+            >
+              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+            </button>
+            <button
+              onClick={onShowSettings}
+              className="p-2 hover:bg-gray-100 rounded-full"
+              title="Settings"
+            >
+              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 flex items-center justify-center p-4">
+          <div className="text-center">
+            <p className="text-gray-500 mb-4">No chats yet</p>
+            <button
+              onClick={onShowUsers}
+              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+            >
+              Find Users
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="w-80 h-full border-r border-gray-200 bg-white flex flex-col">
-      {/* Header with user info and actions */}
-      <div className="p-4 border-b border-gray-200">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center space-x-3">
-            <UserAvatar
-              user={{
-                displayName: currentUser.displayName,
-                photoURL: currentUser.photoURL,
-                email: currentUser.email
-              }}
-              className="w-10 h-10"
-            />
-            <div>
-              <h2 className="font-semibold">{currentUser.displayName}</h2>
-              <p className="text-sm text-gray-500">{currentUser.email}</p>
-            </div>
-          </div>
-        </div>
+    <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
+      <div className="p-4 flex justify-between items-center border-b border-gray-200">
+        <h2 className="text-xl font-semibold">Chats</h2>
         <div className="flex space-x-2">
           <button
-            onClick={onShowSearch}
-            className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+            onClick={onShowUsers}
+            className="p-2 hover:bg-gray-100 rounded-full"
+            title="Find Users"
           >
-            Find Users
+            <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
           </button>
           <button
             onClick={onShowSettings}
-            className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+            className="p-2 hover:bg-gray-100 rounded-full"
+            title="Settings"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
+            <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
           </button>
         </div>
       </div>
 
-      {/* Chat list */}
-      <div 
-        ref={parentRef} 
-        className="h-full overflow-auto"
+      <div
+        ref={parentRef}
+        className="flex-1 overflow-y-auto"
       >
-        <div className="space-y-2">
+        <div
+          style={{
+            height: `${rowVirtualizer.getTotalSize()}px`,
+            width: '100%',
+            position: 'relative',
+          }}
+        >
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
             const chat = chats[virtualRow.index];
-            const otherParticipantId = chat.participants.find(
-              (id) => id !== currentUser.uid
-            );
-            const otherParticipant = otherParticipantId ? chat.participantDetails[otherParticipantId] : null;
-
-            if (!otherParticipant) {
-              console.error('Could not find other participant details for chat:', chat.id);
-              return null;
-            }
-
-            // Convert Firestore timestamp to Date if it exists
-            const lastSeen = otherParticipant.lastSeen 
-              ? (otherParticipant.lastSeen as unknown as Timestamp).toDate()
-              : null;
+            const otherParticipantId = chat.participants.find(id => id !== currentUser.uid);
+            const otherParticipant = otherParticipantId ? chat.participantDetails?.[otherParticipantId] : null;
 
             return (
-              <button
+              <div
                 key={chat.id}
-                data-index={virtualRow.index}
-                ref={rowVirtualizer.measureElement}
-                onClick={() => onChatSelect(chat.id)}
-                className={`w-full text-left p-3 rounded-lg transition-colors ${
+                className={`absolute top-0 left-0 w-full ${
                   selectedChatId === chat.id ? 'bg-blue-50' : 'hover:bg-gray-50'
                 }`}
+                style={{
+                  height: `${virtualRow.size}px`,
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+                onClick={() => onChatSelect(chat.id)}
               >
-                <div className="flex items-center space-x-3">
-                  <div className="relative flex-shrink-0">
-                    <UserAvatar
-                      user={{
-                        displayName: otherParticipant.displayName || 'Unknown User',
-                        photoURL: otherParticipant.photoURL,
-                        email: otherParticipant.email || '',
-                      }}
-                      className="h-12 w-12 md:h-10 md:w-10"
-                    />
-                    {otherParticipant.online && (
-                      <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>
-                    )}
-                  </div>
+                <div className="p-4 flex items-center space-x-4">
+                  <UserAvatar
+                    src={otherParticipant?.photoURL || ''}
+                    alt={otherParticipant?.displayName || 'User'}
+                    size={48}
+                  />
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-baseline">
-                      <p className="font-medium text-base md:text-sm truncate">
-                        {otherParticipant.displayName || 'Unknown User'}
-                      </p>
+                      <h3 className="text-sm font-medium text-gray-900 truncate">
+                        {otherParticipant?.displayName || 'Unknown User'}
+                      </h3>
                       {chat.lastMessageTime && (
-                        <span className="text-xs text-gray-400 ml-2 whitespace-nowrap">
-                          {new Date(chat.lastMessageTime).toLocaleTimeString([], {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
+                        <span className="text-xs text-gray-500">
+                          {formatLastSeen(chat.lastMessageTime)}
                         </span>
                       )}
                     </div>
-                    <div className="flex justify-between items-baseline">
-                      <div className="flex-1 min-w-0">
-                        {chat.lastMessage ? (
-                          <p className="text-sm text-gray-500 truncate">
-                            {chat.lastMessage}
-                          </p>
-                        ) : (
-                          <p className="text-sm text-gray-400 italic">
-                            No messages yet
-                          </p>
-                        )}
-                      </div>
-                      <span className="text-xs text-gray-400 ml-2 whitespace-nowrap hidden md:inline">
-                        {formatLastSeen(lastSeen, otherParticipant.online)}
-                      </span>
-                    </div>
+                    <p className="text-sm text-gray-500 truncate">
+                      {chat.lastMessage?.text || 'No messages yet'}
+                    </p>
                   </div>
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>
