@@ -42,9 +42,8 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
     console.log('Current user:', currentUser.uid);
     const usersRef = collection(db, 'users');
     const q = query(
-      usersRef, 
-      where('uid', '!=', currentUser.uid),
-      where('displayName', '!=', null)
+      usersRef,
+      where('uid', '!=', currentUser.uid)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -52,6 +51,7 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
       const userList: ChatUser[] = snapshot.docs
         .map(doc => {
           const data = doc.data();
+          // Skip users without displayName or uid
           if (!data.uid || !data.displayName) return null;
           
           return {
@@ -114,7 +114,7 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
           createdAt: serverTimestamp(),
           lastMessageTime: serverTimestamp(),
           lastMessage: null,
-          typingUsers: {},
+          typingUsers: [],
           draftMessages: {},
         };
 
@@ -137,58 +137,83 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900" />
+      <div className="flex-1 p-4">
+        <div className="space-y-4">
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className="animate-pulse flex items-center space-x-4">
+              <div className="rounded-full bg-gray-200 h-12 w-12"></div>
+              <div className="flex-1 space-y-2">
+                <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+                <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="text-red-500 text-center p-4">
-        {error}
+      <div className="flex-1 flex items-center justify-center p-4">
+        <div className="text-center">
+          <p className="text-red-500 mb-4">{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (users.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-4">
+        <div className="text-center">
+          <p className="text-gray-500">No other users found</p>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-2">
-      {users.length === 0 ? (
-        <div className="text-center text-gray-500 p-4">
-          No other users found
-        </div>
-      ) : (
-        users.map((user) => (
-          <button
-            key={user.uid}
-            onClick={() => handleCreateChat(user)}
-            className="w-full p-3 flex items-center space-x-3 hover:bg-gray-50 rounded-lg transition-colors"
-          >
-            <div className="relative flex-shrink-0">
-              <UserAvatar
-                user={user}
-                className="h-12 w-12 md:h-10 md:w-10"
-              />
-              {user.online && (
-                <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>
-              )}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex justify-between items-center">
-                <p className="font-medium text-base md:text-sm truncate">
-                  {user.displayName || 'Unknown User'}
-                </p>
-              </div>
-              <p className="text-sm text-gray-500 truncate">
-                {user.email}
-              </p>
-              <p className="text-xs text-gray-400 hidden md:block">
-                {formatLastSeen(user.lastSeen, user.online)}
+      {users.map((user) => (
+        <button
+          key={user.uid}
+          onClick={() => handleCreateChat(user)}
+          className="w-full p-3 flex items-center space-x-3 hover:bg-gray-50 rounded-lg transition-colors"
+        >
+          <div className="relative flex-shrink-0">
+            <UserAvatar
+              user={{
+                photoURL: user.photoURL,
+                displayName: user.displayName || 'Anonymous User'
+              }}
+              className="h-12 w-12 md:h-10 md:w-10"
+            />
+            {user.online && (
+              <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex justify-between items-center">
+              <p className="font-medium text-base md:text-sm truncate">
+                {user.displayName || 'Unknown User'}
               </p>
             </div>
-          </button>
-        ))
-      )}
+            <p className="text-sm text-gray-500 truncate">
+              {user.email}
+            </p>
+            <p className="text-xs text-gray-400 hidden md:block">
+              {formatLastSeen(user.lastSeen, user.online)}
+            </p>
+          </div>
+        </button>
+      ))}
     </div>
   );
 }
