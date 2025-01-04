@@ -16,6 +16,7 @@ import {
   setDoc,
   Timestamp,
   limit,
+  writeBatch
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import UserAvatar from './UserAvatar';
@@ -134,59 +135,54 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     setTimeout(checkTypingTimeout, TYPING_TIMER_LENGTH);
   }, [isTyping, updateTypingStatus]);
 
-  const handleSendMessage = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMessage.trim()) return;
+  const sendMessage = useCallback(async (messageText: string) => {
+    if (!messageText.trim() || !chatId) return;
 
-    const messageText = newMessage;
-    setNewMessage('');
-    setIsTyping(false);
-    updateTypingStatus(false);
+    const now = new Date();
+    const timestamp = serverTimestamp();
+    const messagesRef = collection(db, 'chats', chatId, 'messages');
+    const chatRef = doc(db, 'chats', chatId);
 
     try {
-      const now = new Date();
-      const timestamp = serverTimestamp();
-      const messagesRef = collection(db, 'chats', chatId, 'messages');
-      const chatRef = doc(db, 'chats', chatId);
+      setNewMessage('');
+      updateTypingStatus(false);
 
-      // Add message to messages collection
-      const messageDoc = await addDoc(messagesRef, {
+      // Batch write to ensure atomicity
+      const batch = writeBatch(db);
+
+      // Create the message document
+      const messageRef = doc(messagesRef);
+      batch.set(messageRef, {
         text: messageText,
         senderId: currentUser.uid,
         timestamp,
         read: false,
-        createdAt: now
+        createdAt: timestamp
       });
 
       // Update chat metadata
-      await updateDoc(chatRef, {
+      batch.update(chatRef, {
         lastMessage: {
           text: messageText,
           senderId: currentUser.uid,
-          timestamp: timestamp,
+          timestamp,
         },
         lastMessageTime: timestamp,
         [`participantDetails.${currentUser.uid}.lastSeen`]: timestamp,
         [`participantDetails.${currentUser.uid}.online`]: true,
       });
 
-      // Update local state
-      setMessages(prevMessages => [...prevMessages, {
-        id: messageDoc.id,
-        chatId: chatId,
-        text: messageText,
-        senderId: currentUser.uid,
-        timestamp: now,
-        createdAt: now,
-        read: false
-      }]);
+      // Commit the batch
+      await batch.commit();
 
+      // No need to update local state as the snapshot listener will handle it
       scrollToBottom();
     } catch (error) {
       console.error('Error sending message:', error);
       setNewMessage(messageText);
+      setError('Failed to send message');
     }
-  }, [chatId, currentUser.uid, newMessage, scrollToBottom, updateTypingStatus]);
+  }, [chatId, currentUser.uid, scrollToBottom, updateTypingStatus]);
 
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setNewMessage(e.target.value);
@@ -230,37 +226,41 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     const messagesRef = collection(db, 'chats', chatId, 'messages');
     const q = query(
       messagesRef,
-      orderBy('timestamp', 'asc'),
+      orderBy('timestamp', 'desc'),
       limit(100)
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      try {
-        const messageList = snapshot.docs.map(doc => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            chatId: chatId,
-            text: data.text,
-            senderId: data.senderId,
-            timestamp: data.timestamp?.toDate() || new Date(),
-            createdAt: data.timestamp?.toDate() || new Date(),
-            read: data.read || false
-          };
-        });
-        
-        setMessages(messageList);
-        setTimeout(scrollToBottom, 100);
-      } catch (err) {
-        console.error('Error processing messages:', err);
-        setError('Failed to process messages');
-      } finally {
-        setLoading(false);
+    const unsubscribe = onSnapshot(q, {
+      next: (snapshot) => {
+        try {
+          const messageList = snapshot.docs
+            .map(doc => {
+              const data = doc.data();
+              return {
+                id: doc.id,
+                chatId: chatId,
+                text: data.text,
+                senderId: data.senderId,
+                timestamp: data.timestamp?.toDate() || new Date(),
+                createdAt: data.timestamp?.toDate() || new Date(),
+                read: data.read || false
+              };
+            })
+            .reverse(); // Reverse to show newest messages at the bottom
+          
+          setMessages(messageList);
+          setTimeout(scrollToBottom, 100);
+        } catch (err) {
+          console.error('Error processing messages:', err);
+          setError('Failed to process messages');
+        } finally {
+          setLoading(false);
+        }
+      },
+      error: (err) => {
+        console.error('Error loading messages:', err);
+        setError('Failed to load messages');
       }
-    }, (err) => {
-      console.error('Error loading messages:', err);
-      setError('Failed to load messages');
-      setLoading(false);
     });
 
     return () => unsubscribe();
@@ -442,7 +442,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
 
       {/* Chat input */}
       <div className="p-4 border-t border-gray-200">
-        <form onSubmit={handleSendMessage} className="flex space-x-4">
+        <form onSubmit={(e) => { e.preventDefault(); sendMessage(newMessage); }} className="flex space-x-4">
           <textarea
             value={newMessage}
             onChange={handleInputChange}
