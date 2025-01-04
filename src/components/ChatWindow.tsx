@@ -106,17 +106,34 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     if (!chatId) return;
 
     const messagesRef = collection(db, 'chats', chatId, 'messages');
-    const q = query(messagesRef, orderBy('timestamp', 'desc'), limit(50));
+    const q = query(
+      messagesRef,
+      orderBy('timestamp', 'asc'),
+      limit(100)
+    );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const messageList = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        timestamp: doc.data().timestamp?.toDate() || new Date()
-      })).reverse();
-      
-      setMessages(messageList);
-      setLoading(false);
+      try {
+        const messageList = snapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            text: data.text,
+            senderId: data.senderId,
+            timestamp: data.timestamp?.toDate() || new Date(),
+            read: data.read || false
+          };
+        });
+        
+        setMessages(messageList);
+        // Scroll to bottom when new messages arrive
+        setTimeout(scrollToBottom, 100);
+      } catch (err) {
+        console.error('Error processing messages:', err);
+        setError('Failed to process messages');
+      } finally {
+        setLoading(false);
+      }
     }, (err) => {
       console.error('Error loading messages:', err);
       setError('Failed to load messages');
@@ -124,7 +141,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     });
 
     return () => unsubscribe();
-  }, [chatId]);
+  }, [chatId, scrollToBottom]);
 
   // Update presence
   useEffect(() => {
@@ -231,11 +248,21 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     updateTypingStatus(false);
 
     try {
+      const now = new Date();
       const timestamp = serverTimestamp();
       const messagesRef = collection(db, 'chats', chatId, 'messages');
       const chatRef = doc(db, 'chats', chatId);
 
-      // First update the chat document with the new message information
+      // First add the message to the messages subcollection
+      const messageDoc = await addDoc(messagesRef, {
+        text: messageText,
+        senderId: currentUser.uid,
+        timestamp,
+        read: false,
+        createdAt: now // Add client-side timestamp for immediate display
+      });
+
+      // Then update the chat document with the new message information
       await updateDoc(chatRef, {
         lastMessage: {
           text: messageText,
@@ -247,13 +274,14 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
         [`participantDetails.${currentUser.uid}.online`]: true,
       });
 
-      // Then add the message to the messages subcollection
-      await addDoc(messagesRef, {
+      // Add the new message to the local state immediately
+      setMessages(prevMessages => [...prevMessages, {
+        id: messageDoc.id,
         text: messageText,
         senderId: currentUser.uid,
-        timestamp,
-        read: false,
-      });
+        timestamp: now,
+        read: false
+      }]);
 
       // Scroll to bottom after sending
       scrollToBottom();
@@ -390,10 +418,16 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
                 >
                   <p className="break-words text-sm md:text-base">{message.text}</p>
                   <p className="text-xs mt-1 opacity-70">
-                    {new Date(message.createdAt).toLocaleTimeString([], {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
+                    {message.timestamp instanceof Date
+                      ? message.timestamp.toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })
+                      : new Date().toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })
+                    }
                   </p>
                 </div>
               </div>
