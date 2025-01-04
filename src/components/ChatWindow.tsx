@@ -354,8 +354,37 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
         <div className="text-center">
           <p className="text-red-500 mb-4">{error}</p>
           <button
-            onClick={() => window.location.reload()}
-            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+            onClick={() => {
+              setError(null);
+              setLoading(true);
+              const chatRef = doc(db, 'chats', chatId);
+              getDoc(chatRef)
+                .then((doc) => {
+                  if (doc.exists()) {
+                    const data = doc.data();
+                    setChat({
+                      id: doc.id,
+                      participants: data.participants || [],
+                      participantDetails: data.participantDetails || {},
+                      createdAt: data.createdAt?.toDate() || new Date(),
+                      lastMessageTime: data.lastMessageTime?.toDate() || null,
+                      lastMessage: data.lastMessage || null,
+                      typingUsers: data.typingUsers || {},
+                      draftMessages: data.draftMessages || {},
+                    });
+                    setLoading(false);
+                  } else {
+                    setError('Chat not found');
+                    setLoading(false);
+                  }
+                })
+                .catch((err) => {
+                  console.error('Error retrying chat load:', err);
+                  setError('Failed to load chat. Please try again.');
+                  setLoading(false);
+                });
+            }}
+            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
           >
             Retry
           </button>
