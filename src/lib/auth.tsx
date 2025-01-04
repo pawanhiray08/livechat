@@ -1,8 +1,15 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, GoogleAuthProvider } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp, collection } from 'firebase/firestore';
+import { 
+  onAuthStateChanged, 
+  signInWithPopup, 
+  signOut, 
+  GoogleAuthProvider,
+  browserLocalPersistence,
+  setPersistence
+} from 'firebase/auth';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from './firebase';
 
 export interface User {
@@ -37,54 +44,60 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [initialized, setInitialized] = useState(false);
 
+  // Set up auth state listener
   useEffect(() => {
-    let unsubscribe: () => void;
+    console.log('Setting up auth state listener');
+    
+    // Initialize auth with local persistence
+    setPersistence(auth, browserLocalPersistence)
+      .then(() => {
+        console.log('Auth persistence set to local');
+      })
+      .catch((error) => {
+        console.error('Error setting auth persistence:', error);
+      });
 
-    const initializeAuth = async () => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      console.log('Auth state changed:', firebaseUser?.email);
+      
       try {
-        // Set persistence to LOCAL to persist the auth state
-        await auth.setPersistence('LOCAL');
+        if (firebaseUser) {
+          const { uid, email, displayName, photoURL } = firebaseUser;
+          
+          // Update user document in Firestore
+          const userRef = doc(db, 'users', uid);
+          await setDoc(userRef, {
+            uid,
+            email,
+            displayName: displayName || 'Anonymous User',
+            photoURL,
+            lastSeen: serverTimestamp(),
+            online: true,
+          }, { merge: true });
 
-        unsubscribe = onAuthStateChanged(auth, async (user) => {
-          console.log('Auth state changed:', user?.email);
-          try {
-            if (user) {
-              const { uid, email, displayName, photoURL } = user;
-              
-              // Update or create user document in Firestore
-              const userRef = doc(db, 'users', uid);
-              await setDoc(userRef, {
-                uid,
-                email,
-                displayName: displayName || 'Anonymous User',
-                photoURL,
-                lastSeen: serverTimestamp(),
-                online: true,
-              }, { merge: true });
-
-              setUser({ uid, email, displayName, photoURL });
-            } else {
-              setUser(null);
-            }
-          } catch (error) {
-            console.error('Error updating user data:', error);
-            setUser(null);
-          } finally {
-            setLoading(false);
-            setInitialized(true);
-          }
-        });
+          // Update local state
+          setUser({ uid, email, displayName, photoURL });
+        } else {
+          setUser(null);
+        }
       } catch (error) {
-        console.error('Error initializing auth:', error);
+        console.error('Error updating user data:', error);
+        setUser(null);
+      } finally {
         setLoading(false);
         setInitialized(true);
       }
+    });
+
+    // Cleanup function
+    return () => {
+      unsubscribe();
     };
+  }, []);
 
-    initializeAuth();
-
-    // Set user as offline when the window is closed or component unmounts
-    const handleBeforeUnload = async () => {
+  // Handle user going offline
+  useEffect(() => {
+    const handleOffline = async () => {
       if (auth.currentUser) {
         const userRef = doc(db, 'users', auth.currentUser.uid);
         try {
@@ -98,14 +111,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
-    window.addEventListener('beforeunload', handleBeforeUnload);
-
+    window.addEventListener('beforeunload', handleOffline);
     return () => {
-      if (unsubscribe) {
-        unsubscribe();
-      }
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-      handleBeforeUnload();
+      window.removeEventListener('beforeunload', handleOffline);
+      handleOffline();
     };
   }, []);
 
@@ -113,16 +122,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       setLoading(true);
       const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(auth, provider);
-      const { uid, email, displayName, photoURL } = result.user;
+      provider.setCustomParameters({
+        prompt: 'select_account'
+      });
       
-      // Create/update user document
-      const userRef = doc(db, 'users', uid);
-      await setDoc(userRef, {
-        uid,
-        email,
-        displayName: displayName || 'Anonymous User',
-        photoURL,
+      await signInWithPopup(auth, provider);
+      const currentUser = auth.currentUser;
+      if (!currentUser) throw new Error('Failed to get current user after sign in');
+      
+      await setDoc(doc(db, 'users', currentUser.uid), {
         lastSeen: serverTimestamp(),
         online: true,
       }, { merge: true });
@@ -153,11 +161,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Don't render anything until the initial auth check is complete
+  // Show loading state only during initialization
   if (!initialized) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500" />
+        <div className="flex flex-col items-center space-y-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500" />
+          <p className="text-gray-600">Initializing app...</p>
+        </div>
       </div>
     );
   }
@@ -169,6 +180,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-export const useAuth = () => {
-  return useContext(AuthContext);
-};
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+}

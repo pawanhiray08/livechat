@@ -61,21 +61,16 @@ export default function ChatSidebar({
       setLoading(true);
       setError(null);
 
-      // First verify Firestore connection
+      // First verify Firestore connection and update user status
       const userRef = doc(db, 'users', currentUser.uid);
-      const userSnap = await getDoc(userRef);
-      
-      if (!userSnap.exists()) {
-        // Create user document if it doesn't exist
-        await setDoc(userRef, {
-          uid: currentUser.uid,
-          email: currentUser.email,
-          displayName: currentUser.displayName || 'Anonymous User',
-          photoURL: currentUser.photoURL,
-          lastSeen: serverTimestamp(),
-          online: true,
-        });
-      }
+      await setDoc(userRef, {
+        uid: currentUser.uid,
+        email: currentUser.email,
+        displayName: currentUser.displayName || 'Anonymous User',
+        photoURL: currentUser.photoURL,
+        lastSeen: serverTimestamp(),
+        online: true,
+      }, { merge: true }); // Use merge to preserve existing data
 
       const chatsRef = collection(db, 'chats');
       const q = query(
@@ -87,14 +82,39 @@ export default function ChatSidebar({
 
       return onSnapshot(
         q,
-        (snapshot) => {
+        async (snapshot) => {
           try {
             const chatList: Chat[] = [];
-            snapshot.docs.forEach((doc) => {
+            
+            // Process all chats in parallel
+            await Promise.all(snapshot.docs.map(async (doc) => {
               const data = doc.data();
               if (!data || !data.participants) {
                 console.warn(`Invalid chat data for ${doc.id}:`, data);
                 return;
+              }
+
+              // Get other participant's details if not already in the chat data
+              const otherParticipantId = data.participants.find((id: string) => id !== currentUser.uid);
+              if (otherParticipantId && (!data.participantDetails || !data.participantDetails[otherParticipantId])) {
+                try {
+                  const userDoc = await getDoc(doc(db, 'users', otherParticipantId));
+                  if (userDoc.exists()) {
+                    const userData = userDoc.data();
+                    data.participantDetails = {
+                      ...data.participantDetails,
+                      [otherParticipantId]: {
+                        displayName: userData.displayName || 'Anonymous User',
+                        photoURL: userData.photoURL,
+                        email: userData.email,
+                        lastSeen: userData.lastSeen,
+                        online: userData.online || false,
+                      },
+                    };
+                  }
+                } catch (err) {
+                  console.error(`Error fetching user ${otherParticipantId}:`, err);
+                }
               }
 
               // Convert timestamps to dates
@@ -118,6 +138,13 @@ export default function ChatSidebar({
               };
 
               chatList.push(chat);
+            }));
+
+            // Sort chats by last message time
+            chatList.sort((a, b) => {
+              const timeA = a.lastMessageTime?.getTime() || a.createdAt.getTime();
+              const timeB = b.lastMessageTime?.getTime() || b.createdAt.getTime();
+              return timeB - timeA;
             });
 
             console.log('Loaded chats:', chatList.length);
@@ -142,7 +169,7 @@ export default function ChatSidebar({
       setLoading(false);
       return null;
     }
-  }, [currentUser?.uid]);
+  }, [currentUser?.uid, currentUser?.email, currentUser?.displayName, currentUser?.photoURL]);
 
   useEffect(() => {
     let unsubscribe: (() => void) | null = null;
@@ -269,7 +296,16 @@ export default function ChatSidebar({
   return (
     <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
       <div className="p-4 flex justify-between items-center border-b border-gray-200">
-        <h2 className="text-xl font-semibold">Chats</h2>
+        <div className="flex items-center space-x-3">
+          <UserAvatar
+            user={currentUser}
+            size={40}
+          />
+          <div>
+            <h2 className="text-lg font-semibold">{currentUser.displayName || 'Anonymous User'}</h2>
+            <p className="text-sm text-gray-500">{currentUser.email}</p>
+          </div>
+        </div>
         <div className="flex space-x-2">
           <button
             onClick={onShowUsers}

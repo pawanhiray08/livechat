@@ -1,21 +1,23 @@
 'use client';
 
 import { useAuth } from '@/lib/auth';
-import Image from 'next/image';
 import { useState } from 'react';
 
 export default function LoginPage() {
   console.log('LoginPage component mounted');
-  const { signInWithGoogle, loading: authLoading } = useAuth();
+  const { signInWithGoogle } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleSignIn = async () => {
+    if (isLoading) return;
+    
     console.log('Sign in button clicked');
     try {
       setIsLoading(true);
       setError(null);
       await signInWithGoogle();
+      console.log('Sign in successful');
     } catch (err: any) {
       console.error('Sign in error:', err);
       setError(err.message || 'Failed to sign in with Google. Please try again.');
@@ -40,25 +42,24 @@ export default function LoginPage() {
 
         <button
           onClick={handleSignIn}
-          disabled={isLoading || authLoading}
+          disabled={isLoading}
           className={`w-full flex items-center justify-center px-4 py-3 border border-transparent text-base font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${
-            (isLoading || authLoading) ? 'opacity-50 cursor-not-allowed' : ''
+            isLoading ? 'opacity-50 cursor-not-allowed' : ''
           }`}
         >
-          {(isLoading || authLoading) ? (
+          {isLoading ? (
             <>
               <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-3" />
               Signing in...
             </>
           ) : (
             <>
-              <Image 
-                src="/google.svg" 
-                alt="Google" 
-                width={20} 
-                height={20} 
-                className="mr-2"
-              />
+              <svg className="w-5 h-5 mr-3" viewBox="0 0 24 24">
+                <path
+                  fill="currentColor"
+                  d="M12.545,10.239v3.821h5.445c-0.712,2.315-2.647,3.972-5.445,3.972c-3.332,0-6.033-2.701-6.033-6.032s2.701-6.032,6.033-6.032c1.498,0,2.866,0.549,3.921,1.453l2.814-2.814C17.503,2.988,15.139,2,12.545,2C7.021,2,2.543,6.477,2.543,12s4.478,10,10.002,10c8.396,0,10.249-7.85,9.426-11.748L12.545,10.239z"
+                />
+              </svg>
               Sign in with Google
             </>
           )}
