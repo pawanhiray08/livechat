@@ -35,7 +35,11 @@ interface Chat {
   }>;
   createdAt: Date;
   lastMessageTime: Date | null;
-  lastMessage: string | null;
+  lastMessage: {
+    text: string;
+    senderId: string;
+    timestamp: Timestamp;
+  } | null;
   typingUsers: Record<string, boolean>;
   draftMessages: Record<string, string>;
 }
@@ -62,15 +66,60 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
   const presenceIntervalRef = useRef<NodeJS.Timeout>();
   const TYPING_TIMER_LENGTH = 3000;
 
-  const updateTypingStatus = async (isTyping: boolean) => {
+  // Get the other participant's ID
+  const otherParticipantId = chat?.participants.find(id => id !== currentUser.uid) || '';
+
+  useEffect(() => {
     if (!currentUser?.uid) return;
+
+    // Set up typing status cleanup
+    const cleanupTyping = () => {
+      if (chatId && currentUser?.uid) {
+        const chatRef = doc(db, 'chats', chatId);
+        updateDoc(chatRef, {
+          [`typingUsers.${currentUser.uid}`]: false
+        }).catch(console.error);
+      }
+    };
+
+    // Clean up typing status when unmounting or changing chats
+    return () => {
+      cleanupTyping();
+    };
+  }, [chatId, currentUser?.uid]);
+
+  // Handle typing status updates
+  const handleTyping = useCallback(() => {
+    if (!isTyping) {
+      setIsTyping(true);
+      updateTypingStatus(true);
+    }
+    lastTypingTime.current = Date.now();
+    
+    const checkTypingTimeout = () => {
+      const timeNow = Date.now();
+      const timeDiff = timeNow - lastTypingTime.current;
+      if (timeDiff >= TYPING_TIMER_LENGTH && isTyping) {
+        setIsTyping(false);
+        updateTypingStatus(false);
+      }
+    };
+
+    setTimeout(checkTypingTimeout, TYPING_TIMER_LENGTH);
+  }, [isTyping, updateTypingStatus]);
+
+  // Update typing status in Firestore
+  const updateTypingStatus = async (isTyping: boolean) => {
+    if (!currentUser?.uid || !chatId) return;
     
     const chatRef = doc(db, 'chats', chatId);
-    const typingUpdate = {
-      [`typingUsers.${currentUser.uid}`]: isTyping
-    };
-    
-    await updateDoc(chatRef, typingUpdate);
+    try {
+      await updateDoc(chatRef, {
+        [`typingUsers.${currentUser.uid}`]: isTyping
+      });
+    } catch (error) {
+      console.error('Error updating typing status:', error);
+    }
   };
 
   // Create virtualizer for messages
@@ -197,25 +246,6 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
     }
   }, []);
 
-  const handleTyping = useCallback(() => {
-    if (!isTyping) {
-      setIsTyping(true);
-      updateTypingStatus(true);
-    }
-    lastTypingTime.current = Date.now();
-    
-    const checkTypingTimeout = () => {
-      const timeNow = Date.now();
-      const timeDiff = timeNow - lastTypingTime.current;
-      if (timeDiff >= TYPING_TIMER_LENGTH && isTyping) {
-        setIsTyping(false);
-        updateTypingStatus(false);
-      }
-    };
-
-    setTimeout(checkTypingTimeout, TYPING_TIMER_LENGTH);
-  }, [isTyping, updateTypingStatus]);
-
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim()) return;
@@ -230,15 +260,19 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
       const messagesRef = collection(db, 'chats', chatId, 'messages');
       const chatRef = doc(db, 'chats', chatId);
 
-      // First update the chat document to ensure lastMessageTime is set
+      // First update the chat document with the new message information
       await updateDoc(chatRef, {
-        lastMessage: messageText,
+        lastMessage: {
+          text: messageText,
+          senderId: currentUser.uid,
+          timestamp: timestamp,
+        },
         lastMessageTime: timestamp,
         [`participantDetails.${currentUser.uid}.lastSeen`]: timestamp,
         [`participantDetails.${currentUser.uid}.online`]: true,
       });
 
-      // Then add the message
+      // Then add the message to the messages subcollection
       await addDoc(messagesRef, {
         text: messageText,
         senderId: currentUser.uid,
@@ -246,10 +280,26 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
         read: false,
       });
 
+      // Scroll to bottom after sending
+      scrollToBottom();
     } catch (error) {
       console.error('Error sending message:', error);
       setNewMessage(messageText); // Restore message if send fails
     }
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setNewMessage(e.target.value);
+    handleTyping();
+  };
+
+  // Get other participants who are currently typing
+  const getTypingUsers = () => {
+    if (!chat?.typingUsers || !chat.participantDetails) return [];
+    
+    return Object.entries(chat.typingUsers)
+      .filter(([uid, isTyping]) => isTyping && uid !== currentUser.uid)
+      .map(([uid]) => chat.participantDetails[uid]?.displayName || 'Someone');
   };
 
   if (loading) {
@@ -267,7 +317,7 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
         ref={parentRef}
         className="flex-1 overflow-auto p-4 space-y-4"
         style={{ 
-          height: 'calc(100vh - 80px)',
+          height: 'calc(100vh - 180px)', 
           position: 'relative'
         }}
       >
@@ -317,45 +367,41 @@ export default function ChatWindow({ chatId, currentUser }: ChatWindowProps) {
       </div>
 
       {/* Typing indicator */}
-      {Object.entries(chat?.typingUsers || {})
-        .filter(([uid]) => uid !== currentUser.uid)
-        .map(([uid, isTyping]) => 
-          isTyping && (
-            <div key={uid} className="px-4 py-2 text-sm text-gray-500 italic">
-              {chat?.participantDetails[uid]?.displayName || 'Someone'} is typing...
+      <div className="px-4 h-6 text-sm text-gray-500">
+        {getTypingUsers().length > 0 && (
+          <div className="flex items-center space-x-2">
+            <div className="flex space-x-1">
+              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
             </div>
-          )
+            <span>
+              {getTypingUsers().join(', ')} {getTypingUsers().length === 1 ? 'is' : 'are'} typing...
+            </span>
+          </div>
         )}
+      </div>
 
       {/* Message input */}
-      <form 
-        onSubmit={handleSendMessage} 
-        className="p-4 bg-white border-t border-gray-200 sticky bottom-0"
-      >
-        <div className="flex space-x-2 items-end">
-          <div className="flex-1 min-w-0">
-            <textarea
-              value={newMessage}
-              onChange={(e) => {
-                setNewMessage(e.target.value);
-                handleTyping();
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSendMessage(e);
-                }
-              }}
-              placeholder="Type a message..."
-              className="w-full rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2 resize-none text-sm md:text-base"
-              style={{ maxHeight: '120px' }}
-              rows={1}
-            />
-          </div>
+      <form onSubmit={handleSendMessage} className="p-4 border-t border-gray-200">
+        <div className="flex space-x-4">
+          <textarea
+            value={newMessage}
+            onChange={handleInputChange}
+            placeholder="Type a message..."
+            className="flex-1 resize-none border rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            rows={1}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSendMessage(e);
+              }
+            }}
+          />
           <button
             type="submit"
             disabled={!newMessage.trim()}
-            className="bg-blue-500 text-white rounded-lg px-4 py-2 font-medium hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 text-sm md:text-base"
+            className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Send
           </button>

@@ -33,9 +33,11 @@ export interface Chat {
     };
   };
   lastMessage?: {
+    id: string;
     text: string;
     senderId: string;
     timestamp: Timestamp;
+    read?: boolean;
   } | null;
   lastMessageTime?: Timestamp | null;
   typingUsers: string[];

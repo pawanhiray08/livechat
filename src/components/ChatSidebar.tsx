@@ -118,6 +118,16 @@ export default function ChatSidebar({
                   chat.participantDetails = {};
                 }
 
+                // Validate lastMessage structure
+                if (chat.lastMessage && typeof chat.lastMessage === 'string') {
+                  // Convert old format to new format
+                  chat.lastMessage = {
+                    text: chat.lastMessage,
+                    senderId: data.participants[0], // Use first participant as fallback
+                    timestamp: data.lastMessageTime || Timestamp.now(),
+                  };
+                }
+
                 chatList.push(chat);
               } catch (docErr) {
                 console.error('Error processing individual chat:', doc.id, docErr);
@@ -360,7 +370,14 @@ export default function ChatSidebar({
                       )}
                     </div>
                     <p className="text-sm text-gray-500 truncate">
-                      {chat.lastMessage?.text || 'No messages yet'}
+                      {chat.lastMessage ? (
+                        <>
+                          {chat.lastMessage.senderId === currentUser.uid ? 'You: ' : ''}
+                          {chat.lastMessage.text}
+                        </>
+                      ) : (
+                        'No messages yet'
+                      )}
                     </p>
                   </div>
                 </div>
