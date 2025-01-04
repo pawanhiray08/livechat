@@ -16,8 +16,7 @@ export interface Message {
   text: string;
   senderId: string;
   timestamp: Timestamp;
-  createdAt: Date;
-  read?: boolean;
+  read: boolean;
 }
 
 export interface Chat {
@@ -32,18 +31,15 @@ export interface Chat {
       online: boolean;
     };
   };
-  lastMessage?: {
-    id: string;
+  createdAt: Date;
+  lastMessageTime: Date | null;
+  lastMessage: {
     text: string;
     senderId: string;
     timestamp: Timestamp;
-    read?: boolean;
   } | null;
-  lastMessageTime?: Timestamp | null;
-  typingUsers: string[];
-  draftMessages?: {
-    [key: string]: string;
-  };
+  typingUsers: Record<string, boolean>;
+  draftMessages: Record<string, string>;
 }
 
 export interface FirebaseUser extends User {

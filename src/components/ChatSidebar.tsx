@@ -49,9 +49,7 @@ export default function ChatSidebar({
   });
 
   useEffect(() => {
-    console.log('Setting up chat listener for user:', currentUser?.uid);
     if (!currentUser?.uid) {
-      console.log('No user ID available');
       setLoading(false);
       return;
     }
@@ -60,20 +58,6 @@ export default function ChatSidebar({
     setError(null);
 
     try {
-      // First, update the current user's online status
-      const userRef = doc(db, 'users', currentUser.uid);
-      getDoc(userRef).then(async (userDoc) => {
-        if (userDoc.exists()) {
-          const userData = userDoc.data();
-          if (!userData.online) {
-            await updateDoc(userRef, {
-              online: true,
-              lastSeen: Timestamp.now(),
-            });
-          }
-        }
-      });
-
       // Set up chat listener
       const chatsRef = collection(db, 'chats');
       const q = query(
@@ -83,115 +67,71 @@ export default function ChatSidebar({
         limit(50)
       );
 
-      console.log('Subscribing to chat updates...');
       const unsubscribe = onSnapshot(
         q,
-        async (snapshot) => {
+        (snapshot) => {
           try {
-            console.log('Received chat update, docs count:', snapshot.docs.length);
             const chatList: Chat[] = [];
 
-            for (const doc of snapshot.docs) {
-              try {
-                const data = doc.data();
-                console.log('Processing chat:', doc.id, data);
-
-                if (!data.participants || !Array.isArray(data.participants)) {
-                  console.error('Invalid chat data - missing or invalid participants:', doc.id);
-                  continue;
-                }
-
-                // Ensure all required fields are present
-                const chat: Chat = {
-                  id: doc.id,
-                  participants: data.participants,
-                  participantDetails: data.participantDetails || {},
-                  lastMessage: data.lastMessage || null,
-                  lastMessageTime: data.lastMessageTime || Timestamp.now(), // Provide a default timestamp
-                  typingUsers: Array.isArray(data.typingUsers) ? data.typingUsers : [],
-                  draftMessages: typeof data.draftMessages === 'object' ? data.draftMessages : {},
-                };
-
-                // Validate participant details
-                if (!chat.participantDetails || typeof chat.participantDetails !== 'object') {
-                  console.error('Invalid participant details for chat:', doc.id);
-                  chat.participantDetails = {};
-                }
-
-                // Validate lastMessage structure
-                if (chat.lastMessage && typeof chat.lastMessage === 'string') {
-                  // Convert old format to new format
-                  chat.lastMessage = {
-                    text: chat.lastMessage,
-                    senderId: data.participants[0], // Use first participant as fallback
-                    timestamp: data.lastMessageTime || Timestamp.now(),
-                  };
-                }
-
-                chatList.push(chat);
-              } catch (docErr) {
-                console.error('Error processing individual chat:', doc.id, docErr);
-                // Continue processing other chats
-                continue;
+            snapshot.docs.forEach((doc) => {
+              const data = doc.data();
+              
+              // Basic validation
+              if (!data) {
+                console.warn(`Empty data for chat ${doc.id}`);
+                return;
               }
-            }
 
-            console.log('Setting chats:', chatList.length);
+              // Create chat object with default values
+              const chat: Chat = {
+                id: doc.id,
+                participants: data.participants || [],
+                participantDetails: data.participantDetails || {},
+                createdAt: data.createdAt?.toDate() || new Date(),
+                lastMessageTime: data.lastMessageTime?.toDate() || null,
+                lastMessage: data.lastMessage || null,
+                typingUsers: data.typingUsers || {},
+                draftMessages: data.draftMessages || {},
+              };
+
+              chatList.push(chat);
+            });
+
             setChats(chatList);
             setLoading(false);
+            setError(null);
           } catch (err) {
             console.error('Error processing chat data:', err);
-            setError('Error processing chat data');
+            setError('Error loading chats. Please try again.');
             setLoading(false);
           }
         },
         (err) => {
-          console.error('Firestore subscription error:', err);
-          setError('Failed to load chats');
+          console.error('Error in chat subscription:', err);
+          setError('Failed to load chats. Please check your connection.');
           setLoading(false);
         }
       );
 
-      return () => {
-        console.log('Cleaning up chat subscription');
-        unsubscribe();
-      };
+      return () => unsubscribe();
     } catch (err) {
       console.error('Error setting up chat listener:', err);
-      setError('Failed to set up chat listener');
+      setError('Failed to initialize chat. Please refresh the page.');
       setLoading(false);
     }
   }, [currentUser?.uid]);
 
   if (loading) {
     return (
-      <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
-        <div className="p-4 flex justify-between items-center border-b border-gray-200">
-          <h2 className="text-xl font-semibold">Chats</h2>
-          <div className="flex space-x-2">
-            <button
-              onClick={onShowUsers}
-              className="p-2 hover:bg-gray-100 rounded-full"
-              title="Find Users"
-            >
-              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-              </svg>
-            </button>
-            <button
-              onClick={onShowSettings}
-              className="p-2 hover:bg-gray-100 rounded-full"
-              title="Settings"
-            >
-              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            </button>
+      <div className="w-full md:w-80 bg-white border-r border-gray-200 flex flex-col">
+        <div className="p-4 border-b border-gray-200">
+          <div className="animate-pulse flex items-center justify-between">
+            <div className="h-8 w-24 bg-gray-200 rounded"></div>
+            <div className="h-8 w-8 bg-gray-200 rounded-full"></div>
           </div>
         </div>
-        <div className="flex-1 p-4">
-          <div className="space-y-4">
+        <div className="flex-1 overflow-hidden">
+          <div className="p-4 space-y-4">
             {[...Array(5)].map((_, i) => (
               <div key={i} className="animate-pulse flex items-center space-x-4">
                 <div className="rounded-full bg-gray-200 h-12 w-12"></div>
@@ -209,30 +149,9 @@ export default function ChatSidebar({
 
   if (error) {
     return (
-      <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
-        <div className="p-4 flex justify-between items-center border-b border-gray-200">
+      <div className="w-full md:w-80 bg-white border-r border-gray-200 flex flex-col">
+        <div className="p-4 border-b border-gray-200">
           <h2 className="text-xl font-semibold">Chats</h2>
-          <div className="flex space-x-2">
-            <button
-              onClick={onShowUsers}
-              className="p-2 hover:bg-gray-100 rounded-full"
-              title="Find Users"
-            >
-              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-              </svg>
-            </button>
-            <button
-              onClick={onShowSettings}
-              className="p-2 hover:bg-gray-100 rounded-full"
-              title="Settings"
-            >
-              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            </button>
-          </div>
         </div>
         <div className="flex-1 flex items-center justify-center p-4">
           <div className="text-center">
