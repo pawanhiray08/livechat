@@ -10,34 +10,14 @@ import {
   onSnapshot,
   Timestamp,
   limit,
-  getDoc,
-  updateDoc,
   doc,
-  DocumentData,
-  QueryDocumentSnapshot,
+  getDoc,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import UserAvatar from './UserAvatar';
 import { Chat } from '@/types';
 import { formatLastSeen } from '@/utils/time';
 import { useVirtualizer } from '@tanstack/react-virtual';
-
-interface FirebaseUser {
-  uid: string;
-  displayName: string | null;
-  photoURL: string | null;
-  email: string | null;
-  lastSeen: Timestamp | null;
-  online: boolean;
-}
-
-interface FirestoreUser {
-  displayName: string | null;
-  photoURL: string | null;
-  email: string | null;
-  lastSeen: Timestamp | null;
-  online: boolean;
-}
 
 interface ChatSidebarProps {
   currentUser: User;
@@ -46,10 +26,6 @@ interface ChatSidebarProps {
   onShowSettings: () => void;
   onShowSearch: () => void;
   onShowUsers: () => void;
-}
-
-interface ChatWithId extends Chat {
-  id: string;
 }
 
 export default function ChatSidebar({
@@ -84,6 +60,21 @@ export default function ChatSidebar({
     setError(null);
 
     try {
+      // First, update the current user's online status
+      const userRef = doc(db, 'users', currentUser.uid);
+      getDoc(userRef).then(async (userDoc) => {
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          if (!userData.online) {
+            await updateDoc(userRef, {
+              online: true,
+              lastSeen: Timestamp.now(),
+            });
+          }
+        }
+      });
+
+      // Set up chat listener
       const chatsRef = collection(db, 'chats');
       const q = query(
         chatsRef,
@@ -104,14 +95,18 @@ export default function ChatSidebar({
               const data = doc.data();
               console.log('Processing chat:', doc.id, data);
 
-              chatList.push({
+              // Ensure all required fields are present
+              const chat: Chat = {
                 id: doc.id,
                 participants: data.participants || [],
+                participantDetails: data.participantDetails || {},
                 lastMessage: data.lastMessage || null,
                 lastMessageTime: data.lastMessageTime || null,
                 typingUsers: data.typingUsers || [],
-                participantDetails: data.participantDetails || {}
-              });
+                draftMessages: data.draftMessages || {},
+              };
+
+              chatList.push(chat);
             }
 
             console.log('Setting chats:', chatList.length);
@@ -295,7 +290,6 @@ export default function ChatSidebar({
           </button>
         </div>
       </div>
-
       <div
         ref={parentRef}
         className="flex-1 overflow-y-auto"
@@ -325,11 +319,18 @@ export default function ChatSidebar({
                 onClick={() => onChatSelect(chat.id)}
               >
                 <div className="p-4 flex items-center space-x-4">
-                  <UserAvatar
-                    src={otherParticipant?.photoURL || ''}
-                    alt={otherParticipant?.displayName || 'User'}
-                    size={48}
-                  />
+                  <div className="relative">
+                    <UserAvatar
+                      user={{
+                        photoURL: otherParticipant?.photoURL || null,
+                        displayName: otherParticipant?.displayName || 'Unknown User',
+                      }}
+                      size={48}
+                    />
+                    {otherParticipant?.online && (
+                      <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>
+                    )}
+                  </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-baseline">
                       <h3 className="text-sm font-medium text-gray-900 truncate">

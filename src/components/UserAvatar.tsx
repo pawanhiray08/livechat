@@ -1,43 +1,52 @@
-import Image from 'next/image';
-import { cn } from '@/lib/utils';
+'use client';
 
-interface AvatarUser {
-  displayName: string | null;
-  photoURL: string | null;
-  email: string | null;
-}
+import Image from 'next/image';
 
 interface UserAvatarProps {
-  user: AvatarUser;
+  user: {
+    photoURL: string | null;
+    displayName: string;
+  };
+  size?: number;
   className?: string;
-  children?: React.ReactNode;
 }
 
-export default function UserAvatar({ user, className, children }: UserAvatarProps) {
-  if (!user?.photoURL) {
+export default function UserAvatar({ user, size = 40, className = '' }: UserAvatarProps) {
+  const initials = user.displayName
+    ? user.displayName
+        .split(' ')
+        .map((n) => n[0])
+        .join('')
+        .toUpperCase()
+    : '?';
+
+  if (user.photoURL) {
     return (
       <div
-        className={cn(
-          'rounded-full bg-gray-200 flex items-center justify-center text-gray-500',
-          className
-        )}
+        className={`relative overflow-hidden rounded-full ${className}`}
+        style={{ width: size, height: size }}
       >
-        {user?.displayName?.[0] || user?.email?.[0] || '?'}
-        {children}
+        <Image
+          src={user.photoURL}
+          alt={user.displayName}
+          className="object-cover"
+          fill
+          sizes={`${size}px`}
+        />
       </div>
     );
   }
 
   return (
-    <div className={cn('rounded-full overflow-hidden', className)}>
-      <Image
-        src={user.photoURL}
-        alt={user.displayName || 'User avatar'}
-        width={40}
-        height={40}
-        className="object-cover w-full h-full"
-      />
-      {children}
+    <div
+      className={`flex items-center justify-center rounded-full bg-blue-500 text-white ${className}`}
+      style={{
+        width: size,
+        height: size,
+        fontSize: Math.max(size * 0.4, 14),
+      }}
+    >
+      {initials}
     </div>
   );
 }

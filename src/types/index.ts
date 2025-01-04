@@ -3,10 +3,11 @@ import { User } from 'firebase/auth';
 
 export interface ChatUser {
   uid: string;
-  email: string;
-  displayName: string;
-  photoURL: string;
+  email: string | null;
+  displayName: string | null;
+  photoURL: string | null;
   lastSeen?: Timestamp;
+  online?: boolean;
 }
 
 export interface Message {
@@ -22,13 +23,25 @@ export interface Message {
 export interface Chat {
   id: string;
   participants: string[];
+  participantDetails: {
+    [key: string]: {
+      displayName: string | null;
+      photoURL: string | null;
+      email: string | null;
+      lastSeen: Timestamp | null;
+      online: boolean;
+    };
+  };
   lastMessage?: {
     text: string;
     senderId: string;
     timestamp: Timestamp;
+  } | null;
+  lastMessageTime?: Timestamp | null;
+  typingUsers: string[];
+  draftMessages?: {
+    [key: string]: string;
   };
-  lastMessageTime?: Timestamp;
-  typingUsers?: string[];
 }
 
 export interface FirebaseUser extends User {
