@@ -16,7 +16,8 @@ import {
   serverTimestamp,
   DocumentReference,
   getDoc,
-  DocumentData
+  DocumentData,
+  QueryDocumentSnapshot,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import UserAvatar from './UserAvatar';
