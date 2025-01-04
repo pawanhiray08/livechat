@@ -1,30 +1,43 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/firebase';
-import { doc, writeBatch, serverTimestamp } from 'firebase/firestore';
+import { NextResponse } from 'next/server';
+import { getAuth } from 'firebase-admin/auth';
+import { getDatabase } from 'firebase-admin/database';
+import { initAdmin } from '@/lib/firebase-admin';
 
-export async function GET(request: NextRequest) {
+export const dynamic = 'force-dynamic';
+
+export async function GET(request: Request) {
   try {
-    const searchParams = request.nextUrl.searchParams;
-    const uid = searchParams.get('uid');
-    const online = searchParams.get('online') === 'true';
+    const { searchParams } = new URL(request.url);
+    const idToken = searchParams.get('idToken');
 
-    if (!uid) {
-      return new NextResponse('Missing user ID', { status: 400 });
+    if (!idToken) {
+      return NextResponse.json({ error: 'No ID token provided' }, { status: 400 });
     }
 
-    const userDocRef = doc(db, 'users', uid);
-    const batch = writeBatch(db);
+    // Initialize Firebase Admin
+    initAdmin();
 
-    batch.update(userDocRef, {
-      online,
-      lastSeen: serverTimestamp(),
-    });
+    // Verify the ID token
+    const decodedToken = await getAuth().verifyIdToken(idToken);
+    const uid = decodedToken.uid;
 
-    await batch.commit();
+    // Update presence in Realtime Database
+    const db = getDatabase();
+    const userStatusRef = db.ref(`/status/${uid}`);
+    
+    const status = {
+      state: 'online',
+      last_changed: new Date().toISOString(),
+    };
 
-    return new NextResponse('OK', { status: 200 });
+    await userStatusRef.set(status);
+
+    return NextResponse.json({ status: 'Success', uid });
   } catch (error) {
     console.error('Error updating presence:', error);
-    return new NextResponse('Internal Server Error', { status: 500 });
+    return NextResponse.json(
+      { error: 'Failed to update presence' },
+      { status: 500 }
+    );
   }
 }

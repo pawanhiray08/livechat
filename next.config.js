@@ -14,10 +14,6 @@ const nextConfig = {
   },
   poweredByHeader: false,
   compress: true,
-  experimental: {
-    optimizeCss: true,
-    optimizePackageImports: ['@firebase/auth', '@firebase/firestore', '@firebase/storage']
-  },
   webpack: (config, { dev, isServer }) => {
     // Optimize bundle size
     config.optimization = {
