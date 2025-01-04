@@ -68,24 +68,103 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
   const TYPING_TIMER_LENGTH = 3000;
 
   // Get the other participant's ID
-  const otherParticipantId = chat?.participants.find(id => id !== currentUser.uid) || '';
+  const otherParticipantId = chat?.participants?.find(id => id !== currentUser.uid) || '';
 
+  // Load chat data
+  useEffect(() => {
+    const chatRef = doc(db, 'chats', chatId);
+    
+    const unsubscribe = onSnapshot(chatRef, (doc) => {
+      if (doc.exists()) {
+        const data = doc.data();
+        setChat({
+          id: doc.id,
+          participants: data.participants || [],
+          participantDetails: data.participantDetails || {},
+          createdAt: data.createdAt?.toDate() || new Date(),
+          lastMessageTime: data.lastMessageTime?.toDate() || null,
+          lastMessage: data.lastMessage || null,
+          typingUsers: data.typingUsers || {},
+          draftMessages: data.draftMessages || {},
+        });
+        setLoading(false);
+      } else {
+        setError('Chat not found');
+        setLoading(false);
+      }
+    }, (err) => {
+      console.error('Error loading chat:', err);
+      setError('Failed to load chat');
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [chatId]);
+
+  // Load messages
+  useEffect(() => {
+    if (!chatId) return;
+
+    const messagesRef = collection(db, 'chats', chatId, 'messages');
+    const q = query(messagesRef, orderBy('timestamp', 'desc'), limit(50));
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const messageList = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        timestamp: doc.data().timestamp?.toDate() || new Date()
+      })).reverse();
+      
+      setMessages(messageList);
+      setLoading(false);
+    }, (err) => {
+      console.error('Error loading messages:', err);
+      setError('Failed to load messages');
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [chatId]);
+
+  // Update presence
+  useEffect(() => {
+    if (!chatId || !currentUser?.uid || !chat) return;
+
+    const updatePresence = async () => {
+      const chatRef = doc(db, 'chats', chatId);
+      try {
+        await updateDoc(chatRef, {
+          [`participantDetails.${currentUser.uid}.lastSeen`]: serverTimestamp(),
+          [`participantDetails.${currentUser.uid}.online`]: true,
+        });
+      } catch (error) {
+        console.error('Error updating presence:', error);
+      }
+    };
+
+    updatePresence();
+    const interval = setInterval(updatePresence, 60000); // Update every minute
+    presenceIntervalRef.current = interval;
+
+    return () => {
+      if (presenceIntervalRef.current) {
+        clearInterval(presenceIntervalRef.current);
+      }
+    };
+  }, [chatId, currentUser?.uid, chat]);
+
+  // Set up typing status cleanup
   useEffect(() => {
     if (!currentUser?.uid) return;
 
-    // Set up typing status cleanup
-    const cleanupTyping = () => {
+    // Clean up typing status when unmounting or changing chats
+    return () => {
       if (chatId && currentUser?.uid) {
         const chatRef = doc(db, 'chats', chatId);
         updateDoc(chatRef, {
           [`typingUsers.${currentUser.uid}`]: false
         }).catch(console.error);
       }
-    };
-
-    // Clean up typing status when unmounting or changing chats
-    return () => {
-      cleanupTyping();
     };
   }, [chatId, currentUser?.uid]);
 
@@ -130,111 +209,6 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     estimateSize: () => 60, // Estimate each message height
     overscan: 5, // Number of items to render outside of the visible area
   });
-
-  // Update user's presence
-  const updatePresence = useCallback(async () => {
-    if (!currentUser?.uid) return;
-    
-    const userRef = doc(db, 'users', currentUser.uid);
-    await setDoc(userRef, {
-      lastSeen: serverTimestamp(),
-      online: true
-    }, { merge: true });
-  }, [currentUser?.uid]);
-
-  // Set up presence system
-  useEffect(() => {
-    if (!currentUser?.uid) return;
-
-    // Update presence immediately
-    updatePresence();
-
-    // Set up regular presence updates
-    presenceIntervalRef.current = setInterval(updatePresence, 30000);
-
-    // Set up offline status
-    const userRef = doc(db, 'users', currentUser.uid);
-    
-    // Mark user as offline when they leave
-    const handleOffline = () => {
-      setDoc(userRef, {
-        lastSeen: serverTimestamp(),
-        online: false
-      }, { merge: true });
-    };
-
-    window.addEventListener('beforeunload', handleOffline);
-    window.addEventListener('offline', handleOffline);
-
-    return () => {
-      if (presenceIntervalRef.current) {
-        clearInterval(presenceIntervalRef.current);
-      }
-      handleOffline();
-      window.removeEventListener('beforeunload', handleOffline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, [currentUser?.uid, updatePresence]);
-
-  // Subscribe to chat document for real-time updates
-  useEffect(() => {
-    const chatRef = doc(db, 'chats', chatId);
-    
-    const unsubscribeChatDoc = onSnapshot(chatRef, (doc) => {
-      if (doc.exists()) {
-        const data = doc.data();
-        setChat({
-          id: doc.id,
-          participants: data.participants,
-          participantDetails: data.participantDetails,
-          createdAt: (data.createdAt as Timestamp).toDate(),
-          lastMessageTime: (data.lastMessageTime as Timestamp)?.toDate(),
-          lastMessage: data.lastMessage,
-          typingUsers: data.typingUsers || {},
-          draftMessages: data.draftMessages || {},
-        });
-      }
-    }, (error) => {
-      console.error('Error subscribing to chat:', error);
-      setError('Failed to load chat updates');
-    });
-
-    return () => unsubscribeChatDoc();
-  }, [chatId]);
-
-  useEffect(() => {
-    const messagesRef = collection(db, 'chats', chatId, 'messages');
-    const q = query(messagesRef, orderBy('timestamp', 'desc'), limit(50));
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const messageList: Message[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        messageList.push({
-          id: doc.id,
-          chatId,
-          text: data.text,
-          senderId: data.senderId,
-          timestamp: data.timestamp as Timestamp,
-          createdAt: (data.timestamp as Timestamp).toDate(),
-          read: data.read || false,
-        } as Message);
-      });
-      setMessages(messageList.reverse());
-      setLoading(false);
-      
-      // Scroll to bottom only if we're near the bottom already
-      if (parentRef.current) {
-        const { scrollHeight, scrollTop, clientHeight } = parentRef.current;
-        const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
-        if (isNearBottom) {
-          scrollToBottom();
-        }
-      }
-    });
-
-    return () => unsubscribe();
-  }, [chatId]);
 
   const scrollToBottom = useCallback(() => {
     if (parentRef.current) {
@@ -306,7 +280,33 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900" />
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-red-500 mb-4">{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!chat) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-gray-500">Chat not found</p>
+        </div>
       </div>
     );
   }
@@ -327,28 +327,24 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
               </svg>
             </button>
           )}
-          {chat && (
-            <>
-              <UserAvatar
-                user={{
-                  photoURL: chat.participantDetails[otherParticipantId]?.photoURL || null,
-                  displayName: chat.participantDetails[otherParticipantId]?.displayName || 'Unknown User'
-                }}
-                className="h-10 w-10"
-              />
-              <div>
-                <h2 className="text-lg font-semibold">
-                  {chat.participantDetails[otherParticipantId]?.displayName || 'Unknown User'}
-                </h2>
-                <p className="text-sm text-gray-500">
-                  {formatLastSeen(
-                    chat.participantDetails[otherParticipantId]?.lastSeen || null,
-                    chat.participantDetails[otherParticipantId]?.online
-                  )}
-                </p>
-              </div>
-            </>
-          )}
+          <UserAvatar
+            user={{
+              photoURL: chat.participantDetails[otherParticipantId]?.photoURL || null,
+              displayName: chat.participantDetails[otherParticipantId]?.displayName || 'Unknown User'
+            }}
+            className="h-10 w-10"
+          />
+          <div>
+            <h2 className="text-lg font-semibold">
+              {chat.participantDetails[otherParticipantId]?.displayName || 'Unknown User'}
+            </h2>
+            <p className="text-sm text-gray-500">
+              {formatLastSeen(
+                chat.participantDetails[otherParticipantId]?.lastSeen || null,
+                chat.participantDetails[otherParticipantId]?.online
+              )}
+            </p>
+          </div>
         </div>
       </div>
 
