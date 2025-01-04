@@ -39,6 +39,7 @@ export default function ChatSidebar({
   const [chats, setChats] = useState<Chat[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
   const parentRef = useRef<HTMLDivElement>(null);
 
   const rowVirtualizer = useVirtualizer({
@@ -48,13 +49,20 @@ export default function ChatSidebar({
     overscan: 5,
   });
 
-  useEffect(() => {
+  const loadChats = useCallback(async () => {
     if (!currentUser?.uid) {
       setLoading(false);
       return;
     }
 
     try {
+      setLoading(true);
+      setError(null);
+
+      // First check if we can access Firestore
+      const testRef = doc(db, 'users', currentUser.uid);
+      await getDoc(testRef);
+
       const chatsRef = collection(db, 'chats');
       const q = query(
         chatsRef,
@@ -63,14 +71,14 @@ export default function ChatSidebar({
         limit(50)
       );
 
-      const unsubscribe = onSnapshot(
+      return onSnapshot(
         q,
         (snapshot) => {
           try {
             const chatList: Chat[] = [];
             snapshot.docs.forEach((doc) => {
               const data = doc.data();
-              if (!data) return;
+              if (!data || !data.participants) return;
 
               const chat: Chat = {
                 id: doc.id,
@@ -86,12 +94,6 @@ export default function ChatSidebar({
                 typingUsers: data.typingUsers || {},
                 draftMessages: data.draftMessages || {},
               };
-
-              // Validate chat data
-              if (!chat.participants.includes(currentUser.uid)) {
-                console.warn('Invalid chat data:', chat);
-                return;
-              }
 
               chatList.push(chat);
             });
@@ -111,20 +113,40 @@ export default function ChatSidebar({
           setLoading(false);
         }
       );
+    } catch (err) {
+      console.error('Error setting up chat listener:', err);
+      setError('Failed to load chats. Please check your connection.');
+      setLoading(false);
+      return null;
+    }
+  }, [currentUser?.uid]);
 
-      return () => {
+  useEffect(() => {
+    let unsubscribe: (() => void) | null = null;
+
+    const initializeChats = async () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+      unsubscribe = await loadChats();
+    };
+
+    initializeChats();
+
+    return () => {
+      if (unsubscribe) {
         try {
           unsubscribe();
         } catch (err) {
           console.error('Error unsubscribing from chats:', err);
         }
-      };
-    } catch (err) {
-      console.error('Error setting up chat listener:', err);
-      setError('Failed to initialize chat list. Please refresh.');
-      setLoading(false);
-    }
-  }, [currentUser?.uid]);
+      }
+    };
+  }, [loadChats, retryCount]);
+
+  const handleRetry = useCallback(() => {
+    setRetryCount(count => count + 1);
+  }, []);
 
   if (loading) {
     return (
@@ -162,8 +184,8 @@ export default function ChatSidebar({
           <div className="text-center">
             <p className="text-red-500 mb-4">{error}</p>
             <button
-              onClick={() => window.location.reload()}
-              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+              onClick={handleRetry}
+              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
             >
               Retry
             </button>

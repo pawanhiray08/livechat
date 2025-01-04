@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signOut, GoogleAuthProvider } from 'firebase/auth';
-import { auth } from './firebase';
+import { auth, db, doc, setDoc, serverTimestamp } from './firebase';
 
 export interface User {
   uid: string;
@@ -30,35 +30,91 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        const { uid, email, displayName, photoURL } = user;
-        setUser({ uid, email, displayName, photoURL });
-      } else {
-        setUser(null);
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      try {
+        if (user) {
+          const { uid, email, displayName, photoURL } = user;
+          
+          // Update or create user document in Firestore
+          const userRef = doc(db, 'users', uid);
+          await setDoc(userRef, {
+            uid,
+            email,
+            displayName: displayName || 'Anonymous User',
+            photoURL,
+            lastSeen: serverTimestamp(),
+            online: true,
+          }, { merge: true });
+
+          setUser({ uid, email, displayName, photoURL });
+        } else {
+          setUser(null);
+        }
+      } catch (error) {
+        console.error('Error updating user data:', error);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
 
-    return unsubscribe;
+    // Set user as offline when the window is closed
+    const handleBeforeUnload = async () => {
+      if (auth.currentUser) {
+        const userRef = doc(db, 'users', auth.currentUser.uid);
+        try {
+          await setDoc(userRef, {
+            online: false,
+            lastSeen: serverTimestamp(),
+          }, { merge: true });
+        } catch (error) {
+          console.error('Error updating offline status:', error);
+        }
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
   }, []);
 
   const signInWithGoogle = async () => {
     const provider = new GoogleAuthProvider();
     try {
-      await signInWithPopup(auth, provider);
+      const result = await signInWithPopup(auth, provider);
+      const { uid, email, displayName, photoURL } = result.user;
+      
+      // Create/update user document
+      const userRef = doc(db, 'users', uid);
+      await setDoc(userRef, {
+        uid,
+        email,
+        displayName: displayName || 'Anonymous User',
+        photoURL,
+        lastSeen: serverTimestamp(),
+        online: true,
+      }, { merge: true });
     } catch (error: any) {
       console.error('Google sign in error:', error);
-      throw new Error(error.message);
+      throw error;
     }
   };
 
   const logout = async () => {
-    try {
-      await signOut(auth);
-    } catch (error: any) {
-      console.error('Logout error:', error);
-      throw new Error(error.message);
+    if (auth.currentUser) {
+      const userRef = doc(db, 'users', auth.currentUser.uid);
+      try {
+        await setDoc(userRef, {
+          online: false,
+          lastSeen: serverTimestamp(),
+        }, { merge: true });
+        await signOut(auth);
+      } catch (error) {
+        console.error('Error signing out:', error);
+        throw error;
+      }
     }
   };
 
