@@ -39,59 +39,69 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
   const [error, setError] = useState<string>('');
 
   useEffect(() => {
-    if (!currentUser?.uid) {
-      setLoading(false);
-      return;
-    }
+    let unsubscribe: (() => void) | undefined;
 
-    try {
-      const usersRef = collection(db, 'users');
-      const q = query(
-        usersRef,
-        where('uid', '!=', currentUser.uid)
-      );
+    const setupUserListener = async () => {
+      if (!currentUser?.uid) {
+        setLoading(false);
+        return;
+      }
 
-      const unsubscribe = onSnapshot(q, 
-        (snapshot) => {
-          try {
-            const userList: ChatUser[] = [];
-            
-            snapshot.docs.forEach((doc) => {
-              const data = doc.data();
-              if (!data || !data.uid) return;
+      try {
+        const usersRef = collection(db, 'users');
+        const q = query(
+          usersRef,
+          where('uid', '!=', currentUser.uid)
+        );
 
-              userList.push({
-                uid: data.uid,
-                displayName: data.displayName || 'Anonymous User',
-                photoURL: data.photoURL || null,
-                email: data.email || null,
-                lastSeen: data.lastSeen ? (data.lastSeen as Timestamp).toDate() : null,
-                online: data.online || false,
+        unsubscribe = onSnapshot(q, 
+          (snapshot) => {
+            try {
+              const userList: ChatUser[] = [];
+              
+              snapshot.docs.forEach((doc) => {
+                const data = doc.data();
+                if (!data || !data.uid) return;
+
+                userList.push({
+                  uid: data.uid,
+                  displayName: data.displayName || 'Anonymous User',
+                  photoURL: data.photoURL || null,
+                  email: data.email || null,
+                  lastSeen: data.lastSeen ? (data.lastSeen as Timestamp).toDate() : null,
+                  online: data.online || false,
+                });
               });
-            });
 
-            setUsers(userList);
-            setLoading(false);
-            setError('');
-          } catch (err) {
-            console.error('Error processing users:', err);
-            setError('Error loading users. Please try again.');
+              setUsers(userList);
+              setLoading(false);
+              setError('');
+            } catch (err) {
+              console.error('Error processing users:', err);
+              setError('Error loading users. Please try again.');
+              setLoading(false);
+            }
+          },
+          (err) => {
+            console.error('Error in user subscription:', err);
+            setError('Failed to load users. Please check your connection.');
             setLoading(false);
           }
-        },
-        (err) => {
-          console.error('Error in user subscription:', err);
-          setError('Failed to load users. Please check your connection.');
-          setLoading(false);
-        }
-      );
+        );
+      } catch (err) {
+        console.error('Error setting up user listener:', err);
+        setError('Failed to initialize user list. Please refresh.');
+        setLoading(false);
+      }
+    };
 
-      return () => unsubscribe();
-    } catch (err) {
-      console.error('Error setting up user listener:', err);
-      setError('Failed to initialize user list. Please refresh.');
-      setLoading(false);
-    }
+    setupUserListener();
+
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
   }, [currentUser?.uid]);
 
   const handleCreateChat = async (otherUser: ChatUser) => {

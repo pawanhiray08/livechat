@@ -19,12 +19,18 @@ interface AuthContextType {
   logout: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType>({
+const defaultAuthContext: AuthContextType = {
   user: null,
   loading: true,
-  signInWithGoogle: async () => {},
-  logout: async () => {},
-});
+  signInWithGoogle: async () => {
+    throw new Error('AuthContext not initialized');
+  },
+  logout: async () => {
+    throw new Error('AuthContext not initialized');
+  },
+};
+
+const AuthContext = createContext<AuthContextType>(defaultAuthContext);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
