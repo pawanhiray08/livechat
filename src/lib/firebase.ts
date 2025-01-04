@@ -23,10 +23,10 @@ const storage = getStorage(app);
 // Initialize Firestore with better persistence settings
 const db = initializeFirestore(app, {
   localCache: persistentLocalCache({
-    tabManager: persistentMultipleTabManager()
+    tabManager: persistentMultipleTabManager(),
+    cacheSizeBytes: 50000000 // Set cache size to 50MB
   }),
-  experimentalForceLongPolling: true, // Add long polling for better connection stability
-  cacheSizeBytes: 50000000 // Set cache size to 50MB
+  experimentalForceLongPolling: true // Add long polling for better connection stability
 });
 
 // Enable offline persistence with error handling
