@@ -92,21 +92,38 @@ export default function ChatSidebar({
             const chatList: Chat[] = [];
 
             for (const doc of snapshot.docs) {
-              const data = doc.data();
-              console.log('Processing chat:', doc.id, data);
+              try {
+                const data = doc.data();
+                console.log('Processing chat:', doc.id, data);
 
-              // Ensure all required fields are present
-              const chat: Chat = {
-                id: doc.id,
-                participants: data.participants || [],
-                participantDetails: data.participantDetails || {},
-                lastMessage: data.lastMessage || null,
-                lastMessageTime: data.lastMessageTime || null,
-                typingUsers: data.typingUsers || [],
-                draftMessages: data.draftMessages || {},
-              };
+                if (!data.participants || !Array.isArray(data.participants)) {
+                  console.error('Invalid chat data - missing or invalid participants:', doc.id);
+                  continue;
+                }
 
-              chatList.push(chat);
+                // Ensure all required fields are present
+                const chat: Chat = {
+                  id: doc.id,
+                  participants: data.participants,
+                  participantDetails: data.participantDetails || {},
+                  lastMessage: data.lastMessage || null,
+                  lastMessageTime: data.lastMessageTime || Timestamp.now(), // Provide a default timestamp
+                  typingUsers: Array.isArray(data.typingUsers) ? data.typingUsers : [],
+                  draftMessages: typeof data.draftMessages === 'object' ? data.draftMessages : {},
+                };
+
+                // Validate participant details
+                if (!chat.participantDetails || typeof chat.participantDetails !== 'object') {
+                  console.error('Invalid participant details for chat:', doc.id);
+                  chat.participantDetails = {};
+                }
+
+                chatList.push(chat);
+              } catch (docErr) {
+                console.error('Error processing individual chat:', doc.id, docErr);
+                // Continue processing other chats
+                continue;
+              }
             }
 
             console.log('Setting chats:', chatList.length);
