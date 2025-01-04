@@ -35,36 +35,55 @@ const AuthContext = createContext<AuthContextType>(defaultAuthContext);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    let unsubscribe: () => void;
+
+    const initializeAuth = async () => {
       try {
-        if (user) {
-          const { uid, email, displayName, photoURL } = user;
-          
-          // Update or create user document in Firestore
-          const userRef = doc(db, 'users', uid);
-          await setDoc(userRef, {
-            uid,
-            email,
-            displayName: displayName || 'Anonymous User',
-            photoURL,
-            lastSeen: serverTimestamp(),
-            online: true,
-          }, { merge: true });
+        // Set persistence to LOCAL to persist the auth state
+        await auth.setPersistence('LOCAL');
 
-          setUser({ uid, email, displayName, photoURL });
-        } else {
-          setUser(null);
-        }
+        unsubscribe = onAuthStateChanged(auth, async (user) => {
+          console.log('Auth state changed:', user?.email);
+          try {
+            if (user) {
+              const { uid, email, displayName, photoURL } = user;
+              
+              // Update or create user document in Firestore
+              const userRef = doc(db, 'users', uid);
+              await setDoc(userRef, {
+                uid,
+                email,
+                displayName: displayName || 'Anonymous User',
+                photoURL,
+                lastSeen: serverTimestamp(),
+                online: true,
+              }, { merge: true });
+
+              setUser({ uid, email, displayName, photoURL });
+            } else {
+              setUser(null);
+            }
+          } catch (error) {
+            console.error('Error updating user data:', error);
+            setUser(null);
+          } finally {
+            setLoading(false);
+            setInitialized(true);
+          }
+        });
       } catch (error) {
-        console.error('Error updating user data:', error);
-      } finally {
+        console.error('Error initializing auth:', error);
         setLoading(false);
+        setInitialized(true);
       }
-    });
+    };
 
-    // Set user as offline when the window is closed
+    initializeAuth();
+
+    // Set user as offline when the window is closed or component unmounts
     const handleBeforeUnload = async () => {
       if (auth.currentUser) {
         const userRef = doc(db, 'users', auth.currentUser.uid);
@@ -82,14 +101,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     window.addEventListener('beforeunload', handleBeforeUnload);
 
     return () => {
-      unsubscribe();
+      if (unsubscribe) {
+        unsubscribe();
+      }
       window.removeEventListener('beforeunload', handleBeforeUnload);
+      handleBeforeUnload();
     };
   }, []);
 
   const signInWithGoogle = async () => {
-    const provider = new GoogleAuthProvider();
     try {
+      setLoading(true);
+      const provider = new GoogleAuthProvider();
       const result = await signInWithPopup(auth, provider);
       const { uid, email, displayName, photoURL } = result.user;
       
@@ -103,27 +126,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         lastSeen: serverTimestamp(),
         online: true,
       }, { merge: true });
-    } catch (error: any) {
-      console.error('Google sign in error:', error);
+    } catch (error) {
+      console.error('Error signing in with Google:', error);
       throw error;
+    } finally {
+      setLoading(false);
     }
   };
 
   const logout = async () => {
-    if (auth.currentUser) {
-      const userRef = doc(db, 'users', auth.currentUser.uid);
-      try {
+    try {
+      setLoading(true);
+      if (auth.currentUser) {
+        const userRef = doc(db, 'users', auth.currentUser.uid);
         await setDoc(userRef, {
           online: false,
           lastSeen: serverTimestamp(),
         }, { merge: true });
-        await signOut(auth);
-      } catch (error) {
-        console.error('Error signing out:', error);
-        throw error;
       }
+      await signOut(auth);
+    } catch (error) {
+      console.error('Error signing out:', error);
+      throw error;
+    } finally {
+      setLoading(false);
     }
   };
+
+  // Don't render anything until the initial auth check is complete
+  if (!initialized) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500" />
+      </div>
+    );
+  }
 
   return (
     <AuthContext.Provider value={{ user, loading, signInWithGoogle, logout }}>
