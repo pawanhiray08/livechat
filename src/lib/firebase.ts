@@ -1,7 +1,7 @@
 import { initializeApp, getApps } from 'firebase/app';
-import { getAuth, connectAuthEmulator } from 'firebase/auth';
-import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
-import { getStorage, connectStorageEmulator } from 'firebase/storage';
+import { getAuth } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
   apiKey: "AIzaSyC0CoKqFonQmdyJ1k7f6pc77KyV3cFCUSM",
@@ -24,18 +24,15 @@ const storage = getStorage(app);
 // Enable offline persistence
 const initializeFirebase = async () => {
   try {
-    const { enableIndexedDbPersistence, enableMultiTabIndexedDbPersistence } = await import('firebase/firestore');
+    const { enableIndexedDbPersistence } = await import('firebase/firestore');
     try {
-      await enableMultiTabIndexedDbPersistence(db);
+      await enableIndexedDbPersistence(db);
+      console.log('Offline persistence enabled');
     } catch (err) {
       if ((err as Error).message.includes('already been called')) {
         console.log('Persistence already enabled');
       } else {
-        try {
-          await enableIndexedDbPersistence(db);
-        } catch (err) {
-          console.error('Error enabling persistence:', err);
-        }
+        console.error('Error enabling persistence:', err);
       }
     }
   } catch (err) {

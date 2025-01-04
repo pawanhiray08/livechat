@@ -2,7 +2,8 @@
 
 import { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signOut, GoogleAuthProvider } from 'firebase/auth';
-import { auth, db, doc, setDoc, serverTimestamp } from './firebase';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore/lite';
+import { auth, db } from './firebase';
 
 export interface User {
   uid: string;
@@ -126,9 +127,5 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 }
 
 export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
+  return useContext(AuthContext);
 };
