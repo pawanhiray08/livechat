@@ -77,40 +77,54 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signInWithGoogle = async () => {
-    try {
-      const provider = new GoogleAuthProvider();
-      // Add timeout to the sign-in process
-      const signInPromise = signInWithPopup(auth, provider);
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Sign in timeout. Please try again.')), 15000)
-      );
-      
-      const result = await Promise.race([signInPromise, timeoutPromise]) as UserCredential;
-      
-      if ('user' in result && result.user) {
-        const userRef = doc(db, 'users', result.user.uid);
-        await setDoc(userRef, {
-          uid: result.user.uid,
-          email: result.user.email,
-          displayName: result.user.displayName || 'Anonymous User',
-          photoURL: result.user.photoURL,
-          lastSeen: serverTimestamp(),
-          online: true,
-        }, { merge: true });
-      }
-    } catch (error: any) {
-      console.error('Error signing in with Google:', error);
-      // Add more specific error messages
-      if (error.code === 'auth/popup-closed-by-user') {
-        throw new Error('Sign-in cancelled. Please try again.');
-      } else if (error.code === 'auth/popup-blocked') {
-        throw new Error('Pop-up blocked by browser. Please enable pop-ups and try again.');
-      } else if (error.message === 'Sign in timeout. Please try again.') {
-        throw error;
-      } else {
-        throw new Error('Failed to sign in. Please try again later.');
+    const MAX_RETRIES = 2;
+    const TIMEOUT_MS = 20000; // 20 seconds
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const provider = new GoogleAuthProvider();
+        provider.setCustomParameters({
+          prompt: 'select_account'
+        });
+
+        // Create a timeout promise
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Sign in is taking longer than expected. Please check your internet connection and try again.')), TIMEOUT_MS)
+        );
+
+        // Attempt sign in with timeout
+        const result = await Promise.race([
+          signInWithPopup(auth, provider),
+          timeoutPromise
+        ]) as UserCredential;
+
+        if ('user' in result && result.user) {
+          const userRef = doc(db, 'users', result.user.uid);
+          await setDoc(userRef, {
+            uid: result.user.uid,
+            email: result.user.email,
+            displayName: result.user.displayName || 'Anonymous User',
+            photoURL: result.user.photoURL,
+            lastSeen: serverTimestamp(),
+            online: true,
+          }, { merge: true });
+
+          return; // Success - exit the function
+        }
+      } catch (error) {
+        lastError = error as Error;
+        
+        // If this is not our last attempt, wait before retrying
+        if (attempt < MAX_RETRIES) {
+          await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before retry
+          continue;
+        }
       }
     }
+
+    // If we get here, all attempts failed
+    throw new Error(lastError?.message || 'Failed to sign in. Please try again.');
   };
 
   const logout = async () => {
