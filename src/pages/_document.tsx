@@ -7,8 +7,7 @@ function Document(props: DocumentProps) {
 
   const cspValue = `
     default-src 'self';
-    script-src 'self' 'unsafe-eval' 'nonce-${nonce}' 'strict-dynamic' https: http:;
-    script-src-elem 'self' 'unsafe-inline' https://*.vercel.app https://*.firebaseapp.com https://*.googleapis.com;
+    script-src 'self' 'unsafe-eval' 'nonce-${nonce}';
     style-src 'self' 'unsafe-inline';
     img-src 'self' blob: data: https://*.googleapis.com https://*.googleusercontent.com;
     font-src 'self' data: https://fonts.gstatic.com;
