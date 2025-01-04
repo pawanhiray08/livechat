@@ -7,17 +7,26 @@ function Document(props: DocumentProps) {
 
   const cspValue = `
     default-src 'self';
-    script-src 'self' 'nonce-${nonce}' 'strict-dynamic' https: 'unsafe-inline';
-    style-src 'self' 'unsafe-inline';
-    img-src 'self' blob: data: https:;
-    font-src 'self';
+    script-src 'self' 'nonce-${nonce}' https://*.firebaseapp.com https://*.googleapis.com;
+    style-src 'self' 'nonce-${nonce}';
+    img-src 'self' blob: data: https://*.googleapis.com https://*.googleusercontent.com;
+    font-src 'self' data: https://fonts.gstatic.com;
     object-src 'none';
     base-uri 'self';
     form-action 'self';
     frame-ancestors 'none';
+    media-src 'none';
+    manifest-src 'self';
+    worker-src 'self';
     block-all-mixed-content;
     upgrade-insecure-requests;
-    connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://apis.google.com wss://*.firebaseio.com;
+    connect-src 'self' 
+      https://*.firebaseio.com 
+      https://*.googleapis.com 
+      https://apis.google.com 
+      https://*.firebase.googleapis.com
+      https://*.firebaseapp.com
+      wss://*.firebaseio.com;
   `.replace(/\s{2,}/g, ' ').trim();
 
   return (
