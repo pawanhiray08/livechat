@@ -24,7 +24,26 @@ const storage = getStorage(app);
 const db = initializeFirestore(app, {
   localCache: persistentLocalCache({
     tabManager: persistentMultipleTabManager()
-  })
+  }),
+  experimentalForceLongPolling: true, // Add long polling for better connection stability
+  cacheSizeBytes: 50000000 // Set cache size to 50MB
 });
+
+// Enable offline persistence with error handling
+try {
+  enableIndexedDbPersistence(db, {
+    forceOwnership: false
+  }).catch((err) => {
+    if (err.code === 'failed-precondition') {
+      // Multiple tabs open, persistence can only be enabled in one tab at a time
+      console.warn('Persistence disabled: multiple tabs open');
+    } else if (err.code === 'unimplemented') {
+      // The current browser doesn't support persistence
+      console.warn('Persistence not supported by browser');
+    }
+  });
+} catch (err) {
+  console.warn('Persistence initialization error:', err);
+}
 
 export { auth, db, storage };
