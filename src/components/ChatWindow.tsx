@@ -26,7 +26,9 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 // Types
 interface ChatMessage extends Message {
   id: string;
+  chatId: string;
   timestamp: Date;
+  createdAt: Date;
   read: boolean;
 }
 
@@ -171,9 +173,11 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
       // Update local state
       setMessages(prevMessages => [...prevMessages, {
         id: messageDoc.id,
+        chatId: chatId,
         text: messageText,
         senderId: currentUser.uid,
         timestamp: now,
+        createdAt: now,
         read: false
       }]);
 
@@ -236,9 +240,11 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
           const data = doc.data();
           return {
             id: doc.id,
+            chatId: chatId,
             text: data.text,
             senderId: data.senderId,
             timestamp: data.timestamp?.toDate() || new Date(),
+            createdAt: data.timestamp?.toDate() || new Date(),
             read: data.read || false
           };
         });
