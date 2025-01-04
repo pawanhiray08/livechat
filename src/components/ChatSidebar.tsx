@@ -3,19 +3,20 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { User } from 'firebase/auth';
 import { 
-  collection,
-  query,
-  where,
-  orderBy,
-  onSnapshot,
-  Timestamp,
+  getFirestore, 
+  doc, 
+  getDoc, 
+  onSnapshot, 
+  collection, 
+  query, 
+  where, 
+  orderBy, 
+  Timestamp, 
   limit,
   getDocs,
-  doc,
   setDoc,
   serverTimestamp,
   DocumentReference,
-  getDoc,
   DocumentData,
   QueryDocumentSnapshot,
 } from 'firebase/firestore';
@@ -123,12 +124,22 @@ export default function ChatSidebar({
             };
 
             // Get other participant's details if not already in the chat data
-            const otherParticipantId = chat.participants.find(id => id !== currentUser.uid);
-            if (otherParticipantId && (!chat.participantDetails[otherParticipantId])) {
+            const otherParticipantId = chat.participants?.find(id => id !== currentUser.uid);
+            if (otherParticipantId && !chat.participantDetails?.[otherParticipantId]) {
               try {
-                const userDoc = await getDoc(doc(db, 'users', otherParticipantId));
-                if (userDoc.exists()) {
+                const usersRef = collection(db, 'users');
+                const userQuery = query(usersRef, where('__name__', '==', otherParticipantId));
+                const userSnapshot = await getDocs(userQuery);
+                
+                if (!userSnapshot.empty) {
+                  const userDoc = userSnapshot.docs[0];
                   const userData = userDoc.data() as FirestoreUserData;
+                  
+                  // Initialize participantDetails if it doesn't exist
+                  if (!chat.participantDetails) {
+                    chat.participantDetails = {};
+                  }
+                  
                   chat.participantDetails[otherParticipantId] = {
                     displayName: userData.displayName || 'Anonymous User',
                     photoURL: userData.photoURL || null,
@@ -136,9 +147,26 @@ export default function ChatSidebar({
                     lastSeen: userData.lastSeen || null,
                     online: userData.online || false,
                   };
+                } else {
+                  console.warn(`User document not found for ID: ${otherParticipantId}`);
+                  chat.participantDetails[otherParticipantId] = {
+                    displayName: 'Deleted User',
+                    photoURL: null,
+                    email: null,
+                    lastSeen: null,
+                    online: false,
+                  };
                 }
               } catch (error) {
                 console.error('Error fetching participant details:', error);
+                // Set default values if there's an error
+                chat.participantDetails[otherParticipantId] = {
+                  displayName: 'Unknown User',
+                  photoURL: null,
+                  email: null,
+                  lastSeen: null,
+                  online: false,
+                };
               }
             }
             
@@ -323,7 +351,7 @@ export default function ChatSidebar({
             const chat = chats[virtualRow.index];
             if (!chat) return null;
             
-            const otherParticipantId = chat.participants.find(id => id !== currentUser.uid);
+            const otherParticipantId = chat.participants?.find(id => id !== currentUser.uid);
             const otherParticipant = otherParticipantId ? chat.participantDetails[otherParticipantId] : null;
             const isSelected = chat.id === selectedChatId;
 

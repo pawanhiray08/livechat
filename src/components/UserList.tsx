@@ -24,7 +24,7 @@ interface ChatUser {
   displayName: string | null;
   photoURL: string | null;
   email: string | null;
-  lastSeen: Date | null;
+  lastSeen: Timestamp | null;
   online: boolean;
 }
 
@@ -68,7 +68,7 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
                   displayName: data.displayName || 'Anonymous User',
                   photoURL: data.photoURL || null,
                   email: data.email || null,
-                  lastSeen: data.lastSeen ? (data.lastSeen as Timestamp).toDate() : null,
+                  lastSeen: data.lastSeen ? (data.lastSeen as Timestamp) : null,
                   online: data.online || false,
                 });
               });
@@ -217,7 +217,7 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
               {user.displayName || 'Anonymous User'}
             </p>
             <p className="text-sm text-gray-500 truncate">
-              {user.online ? 'Online' : formatLastSeen(user.lastSeen, user.online)}
+              {user.online ? 'Online' : formatLastSeen(user.lastSeen ? user.lastSeen.toDate() : null, user.online)}
             </p>
           </div>
         </button>

@@ -55,7 +55,6 @@ interface Chat {
     timestamp: Timestamp;
   } | null;
   typingUsers: Record<string, boolean>;
-  draftMessages: Record<string, string>;
 }
 
 interface ChatWindowProps {
@@ -191,7 +190,6 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
           lastMessageTime: data.lastMessageTime?.toDate() || null,
           lastMessage: data.lastMessage || null,
           typingUsers: data.typingUsers || {},
-          draftMessages: data.draftMessages || {},
         });
         setLoading(false);
       } else {
@@ -335,7 +333,6 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
                       lastMessageTime: data.lastMessageTime?.toDate() || null,
                       lastMessage: data.lastMessage || null,
                       typingUsers: data.typingUsers || {},
-                      draftMessages: data.draftMessages || {},
                     });
                     setLoading(false);
                   } else {

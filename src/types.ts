@@ -1,9 +1,11 @@
+import { Timestamp } from 'firebase/firestore';
+
 export interface ChatUser {
   uid: string;
   displayName: string;
   photoURL: string | null;
   email: string;
-  lastSeen?: Date | null;
+  lastSeen?: Timestamp | null;
   online?: boolean;
 }
 
@@ -11,7 +13,7 @@ interface ParticipantDetails {
   displayName: string;
   photoURL: string | null;
   email: string;
-  lastSeen?: Date | null;
+  lastSeen?: Timestamp | null;
   online?: boolean;
 }
 
@@ -19,9 +21,13 @@ export interface Chat {
   id: string;
   participants: string[];
   participantDetails: Record<string, ParticipantDetails>;
-  createdAt: Date;
-  lastMessageTime: Date;
-  lastMessage: string;
+  createdAt: Timestamp;
+  lastMessageTime: Timestamp | null;
+  lastMessage: {
+    text: string;
+    senderId: string;
+    timestamp: Timestamp;
+  } | null;
   typingUsers?: Record<string, boolean>;
   draftMessages?: Record<string, string>;
 }
@@ -31,5 +37,5 @@ export interface Message {
   chatId: string;
   senderId: string;
   text: string;
-  createdAt: Date;
+  createdAt: Timestamp;
 }
