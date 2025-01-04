@@ -7,7 +7,8 @@ import {
   signOut, 
   GoogleAuthProvider,
   browserLocalPersistence,
-  setPersistence
+  setPersistence,
+  UserCredential
 } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from './firebase';
@@ -84,7 +85,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setTimeout(() => reject(new Error('Sign in timeout. Please try again.')), 30000)
       );
       
-      const result = await Promise.race([signInPromise, timeoutPromise]);
+      const result = await Promise.race([signInPromise, timeoutPromise]) as UserCredential;
       
       if ('user' in result && result.user) {
         const userRef = doc(db, 'users', result.user.uid);
