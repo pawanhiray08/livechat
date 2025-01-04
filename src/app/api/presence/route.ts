@@ -1,36 +1,22 @@
 import { NextResponse } from 'next/server';
-import { getAuth } from 'firebase-admin/auth';
-import { getDatabase } from 'firebase-admin/database';
-import { initAdmin } from '@/lib/firebase-admin';
+import { db } from '@/lib/firebase';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: Request) {
+export async function POST(request: Request) {
   try {
-    const { searchParams } = new URL(request.url);
-    const idToken = searchParams.get('idToken');
+    const { uid, status } = await request.json();
 
-    if (!idToken) {
-      return NextResponse.json({ error: 'No ID token provided' }, { status: 400 });
+    if (!uid) {
+      return NextResponse.json({ error: 'No user ID provided' }, { status: 400 });
     }
 
-    // Initialize Firebase Admin
-    initAdmin();
-
-    // Verify the ID token
-    const decodedToken = await getAuth().verifyIdToken(idToken);
-    const uid = decodedToken.uid;
-
-    // Update presence in Realtime Database
-    const db = getDatabase();
-    const userStatusRef = db.ref(`/status/${uid}`);
-    
-    const status = {
-      state: 'online',
-      last_changed: new Date().toISOString(),
-    };
-
-    await userStatusRef.set(status);
+    const userStatusRef = doc(db, 'status', uid);
+    await setDoc(userStatusRef, {
+      state: status || 'online',
+      lastSeen: serverTimestamp(),
+    }, { merge: true });
 
     return NextResponse.json({ status: 'Success', uid });
   } catch (error) {
