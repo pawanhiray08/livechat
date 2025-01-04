@@ -25,9 +25,11 @@ import { formatLastSeen } from '@/utils/time';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 // Types
-interface ChatMessage extends Message {
+interface ChatMessage {
   id: string;
   chatId: string;
+  text: string;
+  senderId: string;
   timestamp: Date;
   createdAt: Date;
   read: boolean;
@@ -138,32 +140,35 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
   const sendMessage = useCallback(async (messageText: string) => {
     if (!messageText.trim() || !chatId) return;
 
-    const now = new Date();
     const timestamp = serverTimestamp();
     const messagesRef = collection(db, 'chats', chatId, 'messages');
     const chatRef = doc(db, 'chats', chatId);
+    const messageRef = doc(messagesRef);
 
     try {
       setNewMessage('');
       updateTypingStatus(false);
 
+      const messageData = {
+        id: messageRef.id,
+        chatId,
+        text: messageText.trim(),
+        senderId: currentUser.uid,
+        timestamp,
+        createdAt: timestamp,
+        read: false
+      };
+
       // Batch write to ensure atomicity
       const batch = writeBatch(db);
 
       // Create the message document
-      const messageRef = doc(messagesRef);
-      batch.set(messageRef, {
-        text: messageText,
-        senderId: currentUser.uid,
-        timestamp,
-        read: false,
-        createdAt: timestamp
-      });
+      batch.set(messageRef, messageData);
 
       // Update chat metadata
       batch.update(chatRef, {
         lastMessage: {
-          text: messageText,
+          text: messageText.trim(),
           senderId: currentUser.uid,
           timestamp,
         },
@@ -175,7 +180,14 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
       // Commit the batch
       await batch.commit();
 
-      // No need to update local state as the snapshot listener will handle it
+      // Optimistically update the UI
+      const optimisticMessage: ChatMessage = {
+        ...messageData,
+        timestamp: new Date(),
+        createdAt: new Date()
+      };
+      
+      setMessages(prev => [...prev, optimisticMessage]);
       scrollToBottom();
     } catch (error) {
       console.error('Error sending message:', error);
@@ -223,33 +235,37 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
   useEffect(() => {
     if (!chatId) return;
 
+    // Set up message listener
     const messagesRef = collection(db, 'chats', chatId, 'messages');
     const q = query(
       messagesRef,
-      orderBy('timestamp', 'desc'),
-      limit(100)
+      orderBy('timestamp', 'asc')  // Changed to asc to show oldest first
     );
 
-    const unsubscribe = onSnapshot(q, {
-      next: (snapshot) => {
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
         try {
-          const messageList = snapshot.docs
-            .map(doc => {
-              const data = doc.data();
-              return {
-                id: doc.id,
-                chatId: chatId,
-                text: data.text,
-                senderId: data.senderId,
-                timestamp: data.timestamp?.toDate() || new Date(),
-                createdAt: data.timestamp?.toDate() || new Date(),
-                read: data.read || false
-              };
-            })
-            .reverse(); // Reverse to show newest messages at the bottom
-          
+          const messageList = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+              id: doc.id,
+              chatId,
+              text: data.text || '',
+              senderId: data.senderId || '',
+              timestamp: data.timestamp?.toDate() || new Date(),
+              createdAt: data.createdAt?.toDate() || new Date(),
+              read: data.read || false
+            };
+          });
+
           setMessages(messageList);
-          setTimeout(scrollToBottom, 100);
+          
+          // Only scroll if we're near the bottom or if it's a new message
+          const lastMessage = messageList[messageList.length - 1];
+          if (lastMessage?.senderId === currentUser.uid) {
+            setTimeout(scrollToBottom, 100);
+          }
         } catch (err) {
           console.error('Error processing messages:', err);
           setError('Failed to process messages');
@@ -257,14 +273,21 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
           setLoading(false);
         }
       },
-      error: (err) => {
-        console.error('Error loading messages:', err);
+      (error) => {
+        console.error('Error in message subscription:', error);
         setError('Failed to load messages');
+        setLoading(false);
       }
-    });
+    );
 
-    return () => unsubscribe();
-  }, [chatId, scrollToBottom]);
+    return () => {
+      try {
+        unsubscribe();
+      } catch (error) {
+        console.error('Error unsubscribing from messages:', error);
+      }
+    };
+  }, [chatId, currentUser.uid, scrollToBottom]);
 
   // Presence update effect
   useEffect(() => {
