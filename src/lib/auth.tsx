@@ -82,7 +82,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Add timeout to the sign-in process
       const signInPromise = signInWithPopup(auth, provider);
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Sign in timeout. Please try again.')), 30000)
+        setTimeout(() => reject(new Error('Sign in timeout. Please try again.')), 15000)
       );
       
       const result = await Promise.race([signInPromise, timeoutPromise]) as UserCredential;
