@@ -342,9 +342,10 @@ export default function ChatSidebar({
               >
                 <div className="p-4 flex items-center space-x-4">
                   <UserAvatar
-                    src={otherParticipant?.photoURL || ''}
-                    alt={otherParticipant?.displayName || 'Anonymous'}
-                    online={otherParticipant?.online || false}
+                    user={{
+                      photoURL: otherParticipant?.photoURL || null,
+                      displayName: otherParticipant?.displayName || null
+                    }}
                   />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between">
