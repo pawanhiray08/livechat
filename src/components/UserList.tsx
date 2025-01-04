@@ -39,99 +39,102 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
   const [error, setError] = useState<string>('');
 
   useEffect(() => {
-    console.log('Current user:', currentUser.uid);
-    const usersRef = collection(db, 'users');
-    const q = query(
-      usersRef,
-      where('uid', '!=', currentUser.uid)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      console.log('Got snapshot, docs count:', snapshot.size);
-      const userList: ChatUser[] = snapshot.docs
-        .map(doc => {
-          const data = doc.data();
-          // Skip users without displayName or uid
-          if (!data.uid || !data.displayName) return null;
-          
-          return {
-            uid: data.uid,
-            displayName: data.displayName || null,
-            photoURL: data.photoURL || null,
-            email: data.email || null,
-            lastSeen: data.lastSeen ? (data.lastSeen as Timestamp).toDate() : null,
-            online: data.online || false,
-          };
-        })
-        .filter((user): user is ChatUser => user !== null);
-
-      console.log('Final user list:', userList);
-      setUsers(userList);
+    if (!currentUser?.uid) {
       setLoading(false);
-    }, (error) => {
-      console.error('Error fetching users:', error);
-      setError('Failed to load users');
-      setLoading(false);
-    });
+      return;
+    }
 
-    return () => unsubscribe();
-  }, [currentUser.uid]);
+    try {
+      const usersRef = collection(db, 'users');
+      const q = query(
+        usersRef,
+        where('uid', '!=', currentUser.uid)
+      );
+
+      const unsubscribe = onSnapshot(q, 
+        (snapshot) => {
+          try {
+            const userList: ChatUser[] = [];
+            
+            snapshot.docs.forEach((doc) => {
+              const data = doc.data();
+              if (!data || !data.uid) return;
+
+              userList.push({
+                uid: data.uid,
+                displayName: data.displayName || 'Anonymous User',
+                photoURL: data.photoURL || null,
+                email: data.email || null,
+                lastSeen: data.lastSeen ? (data.lastSeen as Timestamp).toDate() : null,
+                online: data.online || false,
+              });
+            });
+
+            setUsers(userList);
+            setLoading(false);
+            setError('');
+          } catch (err) {
+            console.error('Error processing users:', err);
+            setError('Error loading users. Please try again.');
+            setLoading(false);
+          }
+        },
+        (err) => {
+          console.error('Error in user subscription:', err);
+          setError('Failed to load users. Please check your connection.');
+          setLoading(false);
+        }
+      );
+
+      return () => unsubscribe();
+    } catch (err) {
+      console.error('Error setting up user listener:', err);
+      setError('Failed to initialize user list. Please refresh.');
+      setLoading(false);
+    }
+  }, [currentUser?.uid]);
 
   const handleCreateChat = async (otherUser: ChatUser) => {
+    if (!currentUser?.uid) return;
+    
     try {
-      // Create a unique chat ID
       const chatId = [currentUser.uid, otherUser.uid].sort().join('_');
-      console.log('Creating chat with ID:', chatId);
       const chatRef = doc(db, 'chats', chatId);
       const chatDoc = await getDoc(chatRef);
 
       if (!chatDoc.exists()) {
-        console.log('Chat does not exist, creating new chat');
-        // Get current user details
-        const currentUserRef = doc(db, 'users', currentUser.uid);
-        const currentUserDoc = await getDoc(currentUserRef);
-        const currentUserData = currentUserDoc.data();
-        console.log('Current user data:', currentUserData);
-
-        const chatData = {
+        await setDoc(chatRef, {
           participants: [currentUser.uid, otherUser.uid],
           participantDetails: {
             [currentUser.uid]: {
               displayName: currentUser.displayName || 'Unknown User',
               photoURL: currentUser.photoURL,
               email: currentUser.email,
-              lastSeen: currentUserData?.lastSeen || serverTimestamp(),
-              online: currentUserData?.online || true,
+              lastSeen: serverTimestamp(),
+              online: true,
             },
             [otherUser.uid]: {
-              displayName: otherUser.displayName || 'Unknown User',
+              displayName: otherUser.displayName,
               photoURL: otherUser.photoURL,
               email: otherUser.email,
               lastSeen: otherUser.lastSeen || null,
-              online: otherUser.online || false,
+              online: otherUser.online,
             },
           },
           createdAt: serverTimestamp(),
           lastMessageTime: serverTimestamp(),
           lastMessage: null,
-          typingUsers: [],
+          typingUsers: {},
           draftMessages: {},
-        };
-
-        console.log('Creating chat with data:', chatData);
-        await setDoc(chatRef, chatData);
-        console.log('Chat created successfully');
-      } else {
-        console.log('Chat already exists');
+        });
       }
 
-      // Always navigate to the chat, whether it was just created or already existed
       if (onChatCreated) {
-        console.log('Navigating to chat:', chatId);
         onChatCreated(chatId);
       }
     } catch (error) {
       console.error('Error creating chat:', error);
+      setError('Failed to create chat. Please try again.');
     }
   };
 
@@ -199,17 +202,12 @@ export default function UserList({ currentUser, onChatCreated }: UserListProps) 
               <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>
             )}
           </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex justify-between items-center">
-              <p className="font-medium text-base md:text-sm truncate">
-                {user.displayName || 'Unknown User'}
-              </p>
-            </div>
-            <p className="text-sm text-gray-500 truncate">
-              {user.email}
+          <div className="flex-1 min-w-0 text-left">
+            <p className="font-medium text-gray-900 truncate">
+              {user.displayName || 'Anonymous User'}
             </p>
-            <p className="text-xs text-gray-400 hidden md:block">
-              {formatLastSeen(user.lastSeen, user.online)}
+            <p className="text-sm text-gray-500 truncate">
+              {user.online ? 'Online' : formatLastSeen(user.lastSeen, user.online)}
             </p>
           </div>
         </button>
