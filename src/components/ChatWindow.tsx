@@ -23,16 +23,25 @@ import { Message } from '@/types';
 import { formatLastSeen } from '@/utils/time';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
+// Types
+interface ChatMessage extends Message {
+  id: string;
+  timestamp: Date;
+  read: boolean;
+}
+
+interface ChatParticipantDetails {
+  displayName: string | null;
+  photoURL: string | null;
+  email: string | null;
+  lastSeen: Timestamp | null;
+  online: boolean;
+}
+
 interface Chat {
   id: string;
   participants: string[];
-  participantDetails: Record<string, {
-    displayName: string | null;
-    photoURL: string | null;
-    email: string | null;
-    lastSeen: Timestamp | null;
-    online: boolean;
-  }>;
+  participantDetails: Record<string, ChatParticipantDetails>;
   createdAt: Date;
   lastMessageTime: Date | null;
   lastMessage: {
@@ -44,33 +53,143 @@ interface Chat {
   draftMessages: Record<string, string>;
 }
 
-interface MessageWithId extends Message {
-  id: string;
-}
-
 interface ChatWindowProps {
   chatId: string;
   currentUser: User;
   onBack?: () => void;
 }
 
+// Utility functions
+const formatMessageTime = (date: Date | null) => {
+  if (!date) return '';
+  return date.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
+
+const TYPING_TIMER_LENGTH = 3000;
+
 export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowProps) {
-  const [messages, setMessages] = useState<Message[]>([]);
+  // State
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chat, setChat] = useState<Chat | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+
+  // Refs
   const lastTypingTime = useRef<number>(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const parentRef = useRef<HTMLDivElement>(null);
   const presenceIntervalRef = useRef<NodeJS.Timeout>();
-  const TYPING_TIMER_LENGTH = 3000;
 
-  // Get the other participant's ID
+  // Derived state
   const otherParticipantId = chat?.participants?.find(id => id !== currentUser.uid) || '';
 
-  // Load chat data
+  // Utility functions
+  const scrollToBottom = useCallback(() => {
+    if (parentRef.current) {
+      requestAnimationFrame(() => {
+        parentRef.current?.scrollTo({
+          top: parentRef.current.scrollHeight,
+          behavior: 'smooth'
+        });
+      });
+    }
+  }, []);
+
+  const updateTypingStatus = useCallback(async (isTyping: boolean) => {
+    if (!currentUser?.uid || !chatId) return;
+    
+    const chatRef = doc(db, 'chats', chatId);
+    try {
+      await updateDoc(chatRef, {
+        [`typingUsers.${currentUser.uid}`]: isTyping
+      });
+    } catch (error) {
+      console.error('Error updating typing status:', error);
+    }
+  }, [chatId, currentUser?.uid]);
+
+  const handleTyping = useCallback(() => {
+    if (!isTyping) {
+      setIsTyping(true);
+      updateTypingStatus(true);
+    }
+    lastTypingTime.current = Date.now();
+    
+    const checkTypingTimeout = () => {
+      const timeNow = Date.now();
+      const timeDiff = timeNow - lastTypingTime.current;
+      if (timeDiff >= TYPING_TIMER_LENGTH && isTyping) {
+        setIsTyping(false);
+        updateTypingStatus(false);
+      }
+    };
+
+    setTimeout(checkTypingTimeout, TYPING_TIMER_LENGTH);
+  }, [isTyping, updateTypingStatus]);
+
+  const handleSendMessage = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMessage.trim()) return;
+
+    const messageText = newMessage;
+    setNewMessage('');
+    setIsTyping(false);
+    updateTypingStatus(false);
+
+    try {
+      const now = new Date();
+      const timestamp = serverTimestamp();
+      const messagesRef = collection(db, 'chats', chatId, 'messages');
+      const chatRef = doc(db, 'chats', chatId);
+
+      // Add message to messages collection
+      const messageDoc = await addDoc(messagesRef, {
+        text: messageText,
+        senderId: currentUser.uid,
+        timestamp,
+        read: false,
+        createdAt: now
+      });
+
+      // Update chat metadata
+      await updateDoc(chatRef, {
+        lastMessage: {
+          text: messageText,
+          senderId: currentUser.uid,
+          timestamp: timestamp,
+        },
+        lastMessageTime: timestamp,
+        [`participantDetails.${currentUser.uid}.lastSeen`]: timestamp,
+        [`participantDetails.${currentUser.uid}.online`]: true,
+      });
+
+      // Update local state
+      setMessages(prevMessages => [...prevMessages, {
+        id: messageDoc.id,
+        text: messageText,
+        senderId: currentUser.uid,
+        timestamp: now,
+        read: false
+      }]);
+
+      scrollToBottom();
+    } catch (error) {
+      console.error('Error sending message:', error);
+      setNewMessage(messageText);
+    }
+  }, [chatId, currentUser.uid, newMessage, scrollToBottom, updateTypingStatus]);
+
+  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setNewMessage(e.target.value);
+    handleTyping();
+  }, [handleTyping]);
+
+  // Effects
   useEffect(() => {
     const chatRef = doc(db, 'chats', chatId);
     
@@ -101,7 +220,6 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     return () => unsubscribe();
   }, [chatId]);
 
-  // Load messages
   useEffect(() => {
     if (!chatId) return;
 
@@ -126,7 +244,6 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
         });
         
         setMessages(messageList);
-        // Scroll to bottom when new messages arrive
         setTimeout(scrollToBottom, 100);
       } catch (err) {
         console.error('Error processing messages:', err);
@@ -143,7 +260,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     return () => unsubscribe();
   }, [chatId, scrollToBottom]);
 
-  // Update presence
+  // Presence update effect
   useEffect(() => {
     if (!chatId || !currentUser?.uid || !chat) return;
 
@@ -160,7 +277,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     };
 
     updatePresence();
-    const interval = setInterval(updatePresence, 60000); // Update every minute
+    const interval = setInterval(updatePresence, 60000);
     presenceIntervalRef.current = interval;
 
     return () => {
@@ -170,11 +287,10 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     };
   }, [chatId, currentUser?.uid, chat]);
 
-  // Set up typing status cleanup
+  // Typing status cleanup effect
   useEffect(() => {
     if (!currentUser?.uid) return;
 
-    // Clean up typing status when unmounting or changing chats
     return () => {
       if (chatId && currentUser?.uid) {
         const chatRef = doc(db, 'chats', chatId);
@@ -185,126 +301,15 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     };
   }, [chatId, currentUser?.uid]);
 
-  // Update typing status in Firestore
-  const updateTypingStatus = useCallback(async (isTyping: boolean) => {
-    if (!currentUser?.uid || !chatId) return;
-    
-    const chatRef = doc(db, 'chats', chatId);
-    try {
-      await updateDoc(chatRef, {
-        [`typingUsers.${currentUser.uid}`]: isTyping
-      });
-    } catch (error) {
-      console.error('Error updating typing status:', error);
-    }
-  }, [chatId, currentUser?.uid]);
-
-  // Handle typing status updates
-  const handleTyping = useCallback(() => {
-    if (!isTyping) {
-      setIsTyping(true);
-      updateTypingStatus(true);
-    }
-    lastTypingTime.current = Date.now();
-    
-    const checkTypingTimeout = () => {
-      const timeNow = Date.now();
-      const timeDiff = timeNow - lastTypingTime.current;
-      if (timeDiff >= TYPING_TIMER_LENGTH && isTyping) {
-        setIsTyping(false);
-        updateTypingStatus(false);
-      }
-    };
-
-    setTimeout(checkTypingTimeout, TYPING_TIMER_LENGTH);
-  }, [isTyping, updateTypingStatus]);
-
-  // Create virtualizer for messages
+  // Virtualizer setup
   const rowVirtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 60, // Estimate each message height
-    overscan: 5, // Number of items to render outside of the visible area
+    estimateSize: () => 60,
+    overscan: 5,
   });
 
-  const scrollToBottom = useCallback(() => {
-    if (parentRef.current) {
-      requestAnimationFrame(() => {
-        parentRef.current?.scrollTo({
-          top: parentRef.current.scrollHeight,
-          behavior: 'smooth'
-        });
-      });
-    }
-  }, []);
-
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMessage.trim()) return;
-
-    const messageText = newMessage;
-    setNewMessage('');
-    setIsTyping(false);
-    updateTypingStatus(false);
-
-    try {
-      const now = new Date();
-      const timestamp = serverTimestamp();
-      const messagesRef = collection(db, 'chats', chatId, 'messages');
-      const chatRef = doc(db, 'chats', chatId);
-
-      // First add the message to the messages subcollection
-      const messageDoc = await addDoc(messagesRef, {
-        text: messageText,
-        senderId: currentUser.uid,
-        timestamp,
-        read: false,
-        createdAt: now // Add client-side timestamp for immediate display
-      });
-
-      // Then update the chat document with the new message information
-      await updateDoc(chatRef, {
-        lastMessage: {
-          text: messageText,
-          senderId: currentUser.uid,
-          timestamp: timestamp,
-        },
-        lastMessageTime: timestamp,
-        [`participantDetails.${currentUser.uid}.lastSeen`]: timestamp,
-        [`participantDetails.${currentUser.uid}.online`]: true,
-      });
-
-      // Add the new message to the local state immediately
-      setMessages(prevMessages => [...prevMessages, {
-        id: messageDoc.id,
-        text: messageText,
-        senderId: currentUser.uid,
-        timestamp: now,
-        read: false
-      }]);
-
-      // Scroll to bottom after sending
-      scrollToBottom();
-    } catch (error) {
-      console.error('Error sending message:', error);
-      setNewMessage(messageText); // Restore message if send fails
-    }
-  };
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setNewMessage(e.target.value);
-    handleTyping();
-  };
-
-  // Get other participants who are currently typing
-  const getTypingUsers = () => {
-    if (!chat?.typingUsers || !chat.participantDetails) return [];
-    
-    return Object.entries(chat.typingUsers)
-      .filter(([uid, isTyping]) => isTyping && uid !== currentUser.uid)
-      .map(([uid]) => chat.participantDetails[uid]?.displayName || 'Someone');
-  };
-
+  // Loading state
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -313,6 +318,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     );
   }
 
+  // Error state
   if (error) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -329,6 +335,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     );
   }
 
+  // No chat state
   if (!chat) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -418,16 +425,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
                 >
                   <p className="break-words text-sm md:text-base">{message.text}</p>
                   <p className="text-xs mt-1 opacity-70">
-                    {message.timestamp instanceof Date
-                      ? message.timestamp.toLocaleTimeString([], {
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })
-                      : new Date().toLocaleTimeString([], {
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })
-                    }
+                    {formatMessageTime(message.timestamp)}
                   </p>
                 </div>
               </div>
@@ -436,47 +434,26 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
         </div>
       </div>
 
-      {/* Typing indicator */}
-      <div className="px-4 h-6 text-sm text-gray-500">
-        {getTypingUsers().length > 0 && (
-          <div className="flex items-center space-x-2">
-            <div className="flex space-x-1">
-              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-            </div>
-            <span>
-              {getTypingUsers().join(', ')} {getTypingUsers().length === 1 ? 'is' : 'are'} typing...
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* Message input */}
-      <form onSubmit={handleSendMessage} className="p-4 border-t border-gray-200">
-        <div className="flex space-x-4">
+      {/* Chat input */}
+      <div className="p-4 border-t border-gray-200">
+        <form onSubmit={handleSendMessage} className="flex space-x-4">
           <textarea
             value={newMessage}
             onChange={handleInputChange}
             placeholder="Type a message..."
-            className="flex-1 resize-none border rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="flex-1 resize-none rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2"
             rows={1}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                handleSendMessage(e);
-              }
-            }}
+            style={{ minHeight: '40px', maxHeight: '120px' }}
           />
           <button
             type="submit"
             disabled={!newMessage.trim()}
-            className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Send
           </button>
-        </div>
-      </form>
+        </form>
+      </div>
     </div>
   );
 }
