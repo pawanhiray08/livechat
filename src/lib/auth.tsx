@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signOut, GoogleAuthProvider } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore/lite';
+import { doc, setDoc, serverTimestamp, collection } from 'firebase/firestore';
 import { auth, db } from './firebase';
 
 export interface User {
