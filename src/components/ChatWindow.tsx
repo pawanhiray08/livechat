@@ -137,64 +137,39 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     setTimeout(checkTypingTimeout, TYPING_TIMER_LENGTH);
   }, [isTyping, updateTypingStatus]);
 
-  const sendMessage = useCallback(async (messageText: string) => {
-    if (!messageText.trim() || !chatId) return;
-
-    const timestamp = serverTimestamp();
-    const messagesRef = collection(db, 'chats', chatId, 'messages');
-    const chatRef = doc(db, 'chats', chatId);
-    const messageRef = doc(messagesRef);
+  const sendMessage = useCallback(async (text: string) => {
+    if (!text.trim() || !chatId) return;
 
     try {
-      setNewMessage('');
-      updateTypingStatus(false);
-
       const messageData = {
-        id: messageRef.id,
-        chatId,
-        text: messageText.trim(),
+        text: text.trim(),
         senderId: currentUser.uid,
-        timestamp,
-        createdAt: timestamp,
+        timestamp: serverTimestamp(),
+        createdAt: serverTimestamp(),
         read: false
       };
 
-      // Batch write to ensure atomicity
-      const batch = writeBatch(db);
+      // Add message to messages collection
+      await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
 
-      // Create the message document
-      batch.set(messageRef, messageData);
-
-      // Update chat metadata
-      batch.update(chatRef, {
+      // Update chat's last message
+      const chatRef = doc(db, 'chats', chatId);
+      await updateDoc(chatRef, {
         lastMessage: {
-          text: messageText.trim(),
+          text: text.trim(),
           senderId: currentUser.uid,
-          timestamp,
+          timestamp: serverTimestamp()
         },
-        lastMessageTime: timestamp,
-        [`participantDetails.${currentUser.uid}.lastSeen`]: timestamp,
-        [`participantDetails.${currentUser.uid}.online`]: true,
+        lastMessageTime: serverTimestamp()
       });
 
-      // Commit the batch
-      await batch.commit();
-
-      // Optimistically update the UI
-      const optimisticMessage: ChatMessage = {
-        ...messageData,
-        timestamp: new Date(),
-        createdAt: new Date()
-      };
-      
-      setMessages(prev => [...prev, optimisticMessage]);
-      scrollToBottom();
+      // Clear typing indicator
+      setIsTyping(false);
+      updateTypingStatus(false);
     } catch (error) {
       console.error('Error sending message:', error);
-      setNewMessage(messageText);
-      setError('Failed to send message');
     }
-  }, [chatId, currentUser.uid, scrollToBottom, updateTypingStatus]);
+  }, [chatId, currentUser.uid, updateTypingStatus]);
 
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setNewMessage(e.target.value);
@@ -235,59 +210,49 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
   useEffect(() => {
     if (!chatId) return;
 
-    // Set up message listener
-    const messagesRef = collection(db, 'chats', chatId, 'messages');
-    const q = query(
-      messagesRef,
-      orderBy('timestamp', 'asc')  // Changed to asc to show oldest first
+    const messagesQuery = query(
+      collection(db, 'chats', chatId, 'messages'),
+      orderBy('timestamp', 'desc'),
+      limit(50)
     );
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        try {
-          const messageList = snapshot.docs.map(doc => {
-            const data = doc.data();
-            return {
-              id: doc.id,
-              chatId,
-              text: data.text || '',
-              senderId: data.senderId || '',
-              timestamp: data.timestamp?.toDate() || new Date(),
-              createdAt: data.createdAt?.toDate() || new Date(),
-              read: data.read || false
-            };
-          });
+    const unsubscribe = onSnapshot(messagesQuery, (snapshot) => {
+      const newMessages: ChatMessage[] = [];
+      snapshot.docs.forEach((doc) => {
+        const data = doc.data();
+        newMessages.push({
+          id: doc.id,
+          chatId,
+          text: data.text || '',
+          senderId: data.senderId || '',
+          timestamp: data.timestamp?.toDate() || new Date(),
+          createdAt: data.createdAt?.toDate() || new Date(),
+          read: data.read || false
+        });
+      });
 
-          setMessages(messageList);
-          
-          // Only scroll if we're near the bottom or if it's a new message
-          const lastMessage = messageList[messageList.length - 1];
-          if (lastMessage?.senderId === currentUser.uid) {
-            setTimeout(scrollToBottom, 100);
+      // Sort messages by timestamp
+      newMessages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+      setMessages(newMessages);
+      setLoading(false);
+
+      // Mark messages as read
+      if (newMessages.length > 0) {
+        const batch = writeBatch(db);
+        newMessages.forEach(msg => {
+          if (!msg.read && msg.senderId !== currentUser.uid) {
+            const messageRef = doc(db, 'chats', chatId, 'messages', msg.id);
+            batch.update(messageRef, { read: true });
           }
-        } catch (err) {
-          console.error('Error processing messages:', err);
-          setError('Failed to process messages');
-        } finally {
-          setLoading(false);
-        }
-      },
-      (error) => {
-        console.error('Error in message subscription:', error);
-        setError('Failed to load messages');
-        setLoading(false);
+        });
+        batch.commit().catch(error => {
+          console.error('Error marking messages as read:', error);
+        });
       }
-    );
+    });
 
-    return () => {
-      try {
-        unsubscribe();
-      } catch (error) {
-        console.error('Error unsubscribing from messages:', error);
-      }
-    };
-  }, [chatId, currentUser.uid, scrollToBottom]);
+    return () => unsubscribe();
+  }, [chatId, currentUser.uid]);
 
   // Presence update effect
   useEffect(() => {

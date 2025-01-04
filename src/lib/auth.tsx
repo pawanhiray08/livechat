@@ -44,38 +44,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Set browser persistence first
-    setPersistence(auth, browserLocalPersistence)
-      .then(() => {
-        const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-          if (firebaseUser) {
-            const userData: User = {
-              uid: firebaseUser.uid,
-              email: firebaseUser.email,
-              displayName: firebaseUser.displayName,
-              photoURL: firebaseUser.photoURL,
-            };
-            setUser(userData);
-          } else {
-            setUser(null);
-          }
-          setLoading(false);
-        });
+    // Set browser persistence
+    setPersistence(auth, browserLocalPersistence).then(() => {
+      const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+        if (firebaseUser) {
+          // Update user status in Firestore
+          const userRef = doc(db, 'users', firebaseUser.uid);
+          await setDoc(userRef, {
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+            displayName: firebaseUser.displayName || 'Anonymous User',
+            photoURL: firebaseUser.photoURL,
+            lastSeen: serverTimestamp(),
+            online: true,
+          }, { merge: true });
 
-        return () => unsubscribe();
-      })
-      .catch((error) => {
-        console.error('Error setting persistence:', error);
+          setUser({
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+            displayName: firebaseUser.displayName,
+            photoURL: firebaseUser.photoURL,
+          });
+        } else {
+          setUser(null);
+        }
         setLoading(false);
       });
+
+      return () => unsubscribe();
+    });
   }, []);
 
   const signInWithGoogle = async () => {
     try {
       const provider = new GoogleAuthProvider();
       const result = await signInWithPopup(auth, provider);
+      
       if (result.user) {
-        // Update user document
         const userRef = doc(db, 'users', result.user.uid);
         await setDoc(userRef, {
           uid: result.user.uid,
@@ -83,7 +88,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           displayName: result.user.displayName || 'Anonymous User',
           photoURL: result.user.photoURL,
           lastSeen: serverTimestamp(),
-          online: true
+          online: true,
         }, { merge: true });
       }
     } catch (error) {
@@ -93,19 +98,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = async () => {
-    if (user) {
-      // Update user status before signing out
-      const userRef = doc(db, 'users', user.uid);
-      await setDoc(userRef, {
-        online: false,
-        lastSeen: serverTimestamp()
-      }, { merge: true });
+    try {
+      if (user) {
+        // Update user status before signing out
+        const userRef = doc(db, 'users', user.uid);
+        await setDoc(userRef, {
+          online: false,
+          lastSeen: serverTimestamp(),
+        }, { merge: true });
+      }
+      await signOut(auth);
+    } catch (error) {
+      console.error('Error signing out:', error);
+      throw error;
     }
-    return signOut(auth);
+  };
+
+  const value = {
+    user,
+    loading,
+    signInWithGoogle,
+    logout,
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, signInWithGoogle, logout }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );

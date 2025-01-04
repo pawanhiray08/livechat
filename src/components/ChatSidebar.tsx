@@ -15,7 +15,8 @@ import {
   setDoc,
   serverTimestamp,
   DocumentReference,
-  getDoc
+  getDoc,
+  DocumentData
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import UserAvatar from './UserAvatar';
@@ -34,12 +35,12 @@ interface ChatSidebarProps {
 interface UserData {
   displayName: string;
   photoURL: string | null;
-  email: string;
-  lastSeen: Timestamp;
+  email: string | null;
+  lastSeen: Timestamp | null;
   online: boolean;
 }
 
-interface FirestoreUserData {
+interface FirestoreUserData extends DocumentData {
   displayName?: string;
   photoURL?: string;
   email?: string;
@@ -47,19 +48,20 @@ interface FirestoreUserData {
   online?: boolean;
 }
 
+interface ChatMessage {
+  text: string;
+  senderId: string;
+  timestamp: Timestamp;
+}
+
 interface Chat {
   id: string;
   participants: string[];
   participantDetails: { [key: string]: UserData };
   createdAt: Date;
-  lastMessageTime?: Date;
-  lastMessage?: {
-    text?: string;
-    senderId?: string;
-    timestamp?: Timestamp;
-  };
-  typingUsers?: { [key: string]: boolean };
-  draftMessages?: { [key: string]: string };
+  lastMessageTime: Date | null;
+  lastMessage: ChatMessage | null;
+  typingUsers: { [key: string]: boolean };
 }
 
 export default function ChatSidebar({
@@ -82,141 +84,74 @@ export default function ChatSidebar({
     overscan: 5,
   });
 
-  const loadChats = useCallback(async () => {
-    if (!currentUser?.uid) {
-      setLoading(false);
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setError(null);
-
-      // First verify Firestore connection and update user status
-      const userRef = doc(db, 'users', currentUser.uid);
-      await setDoc(userRef, {
-        uid: currentUser.uid,
-        email: currentUser.email,
-        displayName: currentUser.displayName || 'Anonymous User',
-        photoURL: currentUser.photoURL,
-        lastSeen: serverTimestamp(),
-        online: true,
-      }, { merge: true });
-
-      const chatsRef = collection(db, 'chats');
-      const q = query(
-        chatsRef,
-        where('participants', 'array-contains', currentUser.uid),
-        orderBy('lastMessageTime', 'desc'),
-        limit(50)
-      );
-
-      // Set up real-time listener
-      const unsubscribe = onSnapshot(q, async (snapshot) => {
-        try {
-          const chatList: Chat[] = [];
-          
-          // Process all chats in parallel
-          await Promise.all(snapshot.docs.map(async (doc) => {
-            const data = doc.data();
-            if (!data || !data.participants) {
-              console.warn(`Invalid chat data for ${doc.id}:`, data);
-              return;
-            }
-
-            // Get other participant's details if not already in the chat data
-            const otherParticipantId = data.participants.find((id: string) => id !== currentUser.uid);
-            if (otherParticipantId && (!data.participantDetails || !data.participantDetails[otherParticipantId])) {
-              try {
-                const userDoc = await getDoc(doc(db, 'users', otherParticipantId));
-                if (userDoc.exists()) {
-                  const firestoreData = userDoc.data();
-                  const userData: UserData = {
-                    displayName: firestoreData.displayName || 'Anonymous User',
-                    photoURL: firestoreData.photoURL || null,
-                    email: firestoreData.email || '',
-                    lastSeen: firestoreData.lastSeen || Timestamp.now(),
-                    online: firestoreData.online || false,
-                  };
-                  data.participantDetails = {
-                    ...data.participantDetails,
-                    [otherParticipantId]: userData,
-                  };
-                }
-              } catch (err) {
-                console.error(`Error fetching user ${otherParticipantId}:`, err);
-              }
-            }
-
-            // Convert timestamps to dates
-            const createdAt = data.createdAt?.toDate?.() || new Date();
-            const lastMessageTime = data.lastMessageTime?.toDate?.() || createdAt;
-
-            const chat: Chat = {
-              id: doc.id,
-              participants: data.participants,
-              participantDetails: data.participantDetails || {},
-              createdAt,
-              lastMessageTime,
-              lastMessage: data.lastMessage ? {
-                text: data.lastMessage.text || '',
-                senderId: data.lastMessage.senderId || '',
-                timestamp: data.lastMessage.timestamp,
-              } : undefined,
-              typingUsers: data.typingUsers || {},
-              draftMessages: data.draftMessages || {},
-            };
-
-            chatList.push(chat);
-          }));
-
-          // Sort chats by last message time
-          chatList.sort((a, b) => {
-            const timeA = a.lastMessageTime?.getTime() || a.createdAt.getTime();
-            const timeB = b.lastMessageTime?.getTime() || b.createdAt.getTime();
-            return timeB - timeA;
-          });
-
-          setChats(chatList);
-          setLoading(false);
-          setError(null);
-        } catch (err) {
-          console.error('Error processing chats:', err);
-          setError('Error loading chats. Please try again.');
-          setLoading(false);
-        }
-      }, (error) => {
-        console.error('Error in chat subscription:', error);
-        setError('Failed to load chats. Please check your connection.');
-        setLoading(false);
-      });
-
-      return () => {
-        unsubscribe();
-      };
-    } catch (err) {
-      console.error('Error in loadChats:', err);
-      setError('Failed to initialize chat loading. Please refresh the page.');
-      setLoading(false);
-    }
-  }, [currentUser]);
-
-  // Set up chat listener
   useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
-    
-    const setupChats = async () => {
-      unsubscribe = await loadChats();
-    };
+    if (!currentUser?.uid) return;
 
-    setupChats();
+    const chatsQuery = query(
+      collection(db, 'chats'),
+      where('participants', 'array-contains', currentUser.uid),
+      orderBy('lastMessageTime', 'desc'),
+      limit(50)
+    );
 
-    return () => {
-      if (unsubscribe) {
-        unsubscribe();
+    const unsubscribe = onSnapshot(chatsQuery, async (snapshot) => {
+      try {
+        const chatsData: Chat[] = [];
+        
+        for (const doc of snapshot.docs) {
+          const data = doc.data();
+          const chat: Chat = {
+            id: doc.id,
+            participants: data.participants || [],
+            participantDetails: data.participantDetails || {},
+            createdAt: data.createdAt?.toDate() || new Date(),
+            lastMessageTime: data.lastMessageTime?.toDate() || null,
+            lastMessage: data.lastMessage ? {
+              text: data.lastMessage.text || '',
+              senderId: data.lastMessage.senderId || '',
+              timestamp: data.lastMessage.timestamp || Timestamp.now(),
+            } : null,
+            typingUsers: data.typingUsers || {},
+          };
+
+          // Get other participant's details if not already in the chat data
+          const otherParticipantId = chat.participants.find(id => id !== currentUser.uid);
+          if (otherParticipantId && (!chat.participantDetails[otherParticipantId])) {
+            try {
+              const userDoc = await getDoc(doc(db, 'users', otherParticipantId));
+              if (userDoc.exists()) {
+                const userData = userDoc.data() as FirestoreUserData;
+                chat.participantDetails[otherParticipantId] = {
+                  displayName: userData.displayName || 'Anonymous User',
+                  photoURL: userData.photoURL || null,
+                  email: userData.email || null,
+                  lastSeen: userData.lastSeen || null,
+                  online: userData.online || false,
+                };
+              }
+            } catch (error) {
+              console.error('Error fetching participant details:', error);
+            }
+          }
+          
+          chatsData.push(chat);
+        }
+        
+        setChats(chatsData);
+      } catch (error) {
+        console.error('Error processing chats:', error);
+        setError('Failed to load chats');
+      } finally {
+        setLoading(false);
       }
-    };
-  }, [loadChats]);
+    }, (error) => {
+      console.error('Error fetching chats:', error);
+      setError('Failed to load chats');
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [currentUser?.uid]);
 
   if (loading) {
     return (
@@ -228,10 +163,10 @@ export default function ChatSidebar({
           </div>
         </div>
         <div className="flex-1 overflow-hidden">
-          <div className="p-4 space-y-4">
+          <div className="animate-pulse p-4 space-y-4">
             {[...Array(5)].map((_, i) => (
-              <div key={i} className="animate-pulse flex items-center space-x-4">
-                <div className="rounded-full bg-gray-200 h-12 w-12"></div>
+              <div key={i} className="flex items-center space-x-4">
+                <div className="h-12 w-12 bg-gray-200 rounded-full"></div>
                 <div className="flex-1 space-y-2">
                   <div className="h-4 bg-gray-200 rounded w-3/4"></div>
                   <div className="h-3 bg-gray-200 rounded w-1/2"></div>
@@ -246,94 +181,47 @@ export default function ChatSidebar({
 
   if (error) {
     return (
-      <div className="w-full md:w-80 bg-white border-r border-gray-200 flex flex-col">
-        <div className="p-4 border-b border-gray-200">
-          <h2 className="text-xl font-semibold">Chats</h2>
-        </div>
-        <div className="flex-1 flex items-center justify-center p-4">
-          <div className="text-center">
-            <p className="text-red-500 mb-4">{error}</p>
-            <button
-              onClick={() => window.location.reload()}
-              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
-            >
-              Retry
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (chats.length === 0) {
-    return (
-      <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
-        <div className="p-4 flex justify-between items-center border-b border-gray-200">
-          <h2 className="text-xl font-semibold">Chats</h2>
-          <div className="flex space-x-2">
-            <button
-              onClick={onShowUsers}
-              className="p-2 hover:bg-gray-100 rounded-full"
-              title="Find Users"
-            >
-              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-              </svg>
-            </button>
-            <button
-              onClick={onShowSettings}
-              className="p-2 hover:bg-gray-100 rounded-full"
-              title="Settings"
-            >
-              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            </button>
-          </div>
-        </div>
-        <div className="flex-1 flex items-center justify-center p-4">
-          <div className="text-center">
-            <p className="text-gray-500 mb-4">No chats yet</p>
-            <button
-              onClick={onShowUsers}
-              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-            >
-              Find Users
-            </button>
-          </div>
+      <div className="w-full md:w-80 bg-white border-r border-gray-200 flex flex-col p-4">
+        <div className="text-red-500 text-center">
+          <p>{error}</p>
+          <button 
+            onClick={() => window.location.reload()} 
+            className="mt-2 text-blue-500 hover:text-blue-700"
+          >
+            Retry
+          </button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
-      <div className="p-4 flex justify-between items-center border-b border-gray-200">
-        <div className="flex items-center space-x-3">
-          <UserAvatar
-            user={currentUser}
-            size={40}
-          />
-          <div>
-            <h2 className="text-lg font-semibold">{currentUser.displayName ?? 'Anonymous User'}</h2>
-            <p className="text-sm text-gray-500">{currentUser.email}</p>
-          </div>
-        </div>
-        <div className="flex space-x-2">
+    <div className="w-full md:w-80 bg-white border-r border-gray-200 flex flex-col">
+      <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+        <h2 className="text-xl font-semibold">Chats</h2>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={onShowSearch}
+            className="p-2 hover:bg-gray-100 rounded-full"
+            aria-label="Search"
+          >
+            <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </button>
           <button
             onClick={onShowUsers}
             className="p-2 hover:bg-gray-100 rounded-full"
-            title="Find Users"
+            aria-label="New Chat"
           >
             <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
           </button>
           <button
             onClick={onShowSettings}
             className="p-2 hover:bg-gray-100 rounded-full"
-            title="Settings"
+            aria-label="Settings"
           >
             <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
@@ -342,9 +230,14 @@ export default function ChatSidebar({
           </button>
         </div>
       </div>
+
       <div
         ref={parentRef}
-        className="flex-1 overflow-y-auto"
+        className="flex-1 overflow-auto"
+        style={{
+          height: `100%`,
+          width: '100%',
+        }}
       >
         <div
           style={{
@@ -356,14 +249,17 @@ export default function ChatSidebar({
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
             const chat = chats[virtualRow.index];
             const otherParticipantId = chat.participants.find(id => id !== currentUser.uid);
-            const otherParticipant = otherParticipantId ? chat.participantDetails?.[otherParticipantId] : null;
+            const otherParticipant = otherParticipantId ? chat.participantDetails[otherParticipantId] : null;
+            const isSelected = chat.id === selectedChatId;
 
             return (
               <div
                 key={chat.id}
+                ref={rowVirtualizer.measureElement}
+                data-index={virtualRow.index}
                 className={`absolute top-0 left-0 w-full ${
-                  selectedChatId === chat.id ? 'bg-blue-50' : 'hover:bg-gray-50'
-                }`}
+                  isSelected ? 'bg-blue-50' : 'hover:bg-gray-50'
+                } cursor-pointer`}
                 style={{
                   height: `${virtualRow.size}px`,
                   transform: `translateY(${virtualRow.start}px)`,
@@ -371,22 +267,15 @@ export default function ChatSidebar({
                 onClick={() => onChatSelect(chat.id)}
               >
                 <div className="p-4 flex items-center space-x-4">
-                  <div className="relative">
-                    <UserAvatar
-                      user={{
-                        photoURL: otherParticipant?.photoURL || null,
-                        displayName: otherParticipant?.displayName || 'Unknown User',
-                      }}
-                      size={48}
-                    />
-                    {otherParticipant?.online && (
-                      <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>
-                    )}
-                  </div>
+                  <UserAvatar
+                    src={otherParticipant?.photoURL || ''}
+                    alt={otherParticipant?.displayName || 'Anonymous'}
+                    online={otherParticipant?.online || false}
+                  />
                   <div className="flex-1 min-w-0">
-                    <div className="flex justify-between items-baseline">
+                    <div className="flex items-center justify-between">
                       <h3 className="text-sm font-medium text-gray-900 truncate">
-                        {otherParticipant?.displayName || 'Unknown User'}
+                        {otherParticipant?.displayName || 'Anonymous User'}
                       </h3>
                       {chat.lastMessageTime && (
                         <span className="text-xs text-gray-500">
@@ -395,13 +284,7 @@ export default function ChatSidebar({
                       )}
                     </div>
                     <p className="text-sm text-gray-500 truncate">
-                      {chat.lastMessage && typeof chat.lastMessage === 'object' && chat.lastMessage.text ? (
-                        <>
-                          {chat.lastMessage.text}
-                        </>
-                      ) : (
-                        'No message'
-                      )}
+                      {chat.lastMessage?.text || 'No messages yet'}
                     </p>
                   </div>
                 </div>
