@@ -12,6 +12,8 @@ import {
   limit,
   doc,
   getDoc,
+  setDoc,
+  serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import UserAvatar from './UserAvatar';
@@ -59,9 +61,21 @@ export default function ChatSidebar({
       setLoading(true);
       setError(null);
 
-      // First check if we can access Firestore
-      const testRef = doc(db, 'users', currentUser.uid);
-      await getDoc(testRef);
+      // First verify Firestore connection
+      const userRef = doc(db, 'users', currentUser.uid);
+      const userSnap = await getDoc(userRef);
+      
+      if (!userSnap.exists()) {
+        // Create user document if it doesn't exist
+        await setDoc(userRef, {
+          uid: currentUser.uid,
+          email: currentUser.email,
+          displayName: currentUser.displayName || 'Anonymous User',
+          photoURL: currentUser.photoURL,
+          lastSeen: serverTimestamp(),
+          online: true,
+        });
+      }
 
       const chatsRef = collection(db, 'chats');
       const q = query(
@@ -78,18 +92,26 @@ export default function ChatSidebar({
             const chatList: Chat[] = [];
             snapshot.docs.forEach((doc) => {
               const data = doc.data();
-              if (!data || !data.participants) return;
+              if (!data || !data.participants) {
+                console.warn(`Invalid chat data for ${doc.id}:`, data);
+                return;
+              }
+
+              // Convert timestamps to dates
+              const createdAt = data.createdAt?.toDate?.() || new Date();
+              const lastMessageTime = data.lastMessageTime?.toDate?.() || null;
+              const lastMessageTimestamp = data.lastMessage?.timestamp;
 
               const chat: Chat = {
                 id: doc.id,
-                participants: data.participants || [],
+                participants: data.participants,
                 participantDetails: data.participantDetails || {},
-                createdAt: data.createdAt?.toDate() || new Date(),
-                lastMessageTime: data.lastMessageTime?.toDate() || null,
+                createdAt,
+                lastMessageTime,
                 lastMessage: data.lastMessage ? {
                   text: data.lastMessage.text || '',
                   senderId: data.lastMessage.senderId || '',
-                  timestamp: data.lastMessage.timestamp,
+                  timestamp: lastMessageTimestamp,
                 } : null,
                 typingUsers: data.typingUsers || {},
                 draftMessages: data.draftMessages || {},
@@ -98,6 +120,7 @@ export default function ChatSidebar({
               chatList.push(chat);
             });
 
+            console.log('Loaded chats:', chatList.length);
             setChats(chatList);
             setLoading(false);
             setError(null);
@@ -125,10 +148,16 @@ export default function ChatSidebar({
     let unsubscribe: (() => void) | null = null;
 
     const initializeChats = async () => {
-      if (unsubscribe) {
-        unsubscribe();
+      try {
+        if (unsubscribe) {
+          unsubscribe();
+        }
+        unsubscribe = await loadChats();
+      } catch (err) {
+        console.error('Error initializing chats:', err);
+        setError('Failed to initialize chats. Please try again.');
+        setLoading(false);
       }
-      unsubscribe = await loadChats();
     };
 
     initializeChats();
