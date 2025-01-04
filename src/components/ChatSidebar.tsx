@@ -54,11 +54,7 @@ export default function ChatSidebar({
       return;
     }
 
-    setLoading(true);
-    setError(null);
-
     try {
-      // Set up chat listener
       const chatsRef = collection(db, 'chats');
       const q = query(
         chatsRef,
@@ -72,27 +68,30 @@ export default function ChatSidebar({
         (snapshot) => {
           try {
             const chatList: Chat[] = [];
-
             snapshot.docs.forEach((doc) => {
               const data = doc.data();
-              
-              // Basic validation
-              if (!data) {
-                console.warn(`Empty data for chat ${doc.id}`);
-                return;
-              }
+              if (!data) return;
 
-              // Create chat object with default values
               const chat: Chat = {
                 id: doc.id,
                 participants: data.participants || [],
                 participantDetails: data.participantDetails || {},
                 createdAt: data.createdAt?.toDate() || new Date(),
                 lastMessageTime: data.lastMessageTime?.toDate() || null,
-                lastMessage: data.lastMessage || null,
+                lastMessage: data.lastMessage ? {
+                  text: data.lastMessage.text || '',
+                  senderId: data.lastMessage.senderId || '',
+                  timestamp: data.lastMessage.timestamp,
+                } : null,
                 typingUsers: data.typingUsers || {},
                 draftMessages: data.draftMessages || {},
               };
+
+              // Validate chat data
+              if (!chat.participants.includes(currentUser.uid)) {
+                console.warn('Invalid chat data:', chat);
+                return;
+              }
 
               chatList.push(chat);
             });
@@ -101,8 +100,8 @@ export default function ChatSidebar({
             setLoading(false);
             setError(null);
           } catch (err) {
-            console.error('Error processing chat data:', err);
-            setError('Error loading chats. Please try again.');
+            console.error('Error processing chats:', err);
+            setError('Error processing chats. Please try again.');
             setLoading(false);
           }
         },
@@ -113,10 +112,16 @@ export default function ChatSidebar({
         }
       );
 
-      return () => unsubscribe();
+      return () => {
+        try {
+          unsubscribe();
+        } catch (err) {
+          console.error('Error unsubscribing from chats:', err);
+        }
+      };
     } catch (err) {
       console.error('Error setting up chat listener:', err);
-      setError('Failed to initialize chat. Please refresh the page.');
+      setError('Failed to initialize chat list. Please refresh.');
       setLoading(false);
     }
   }, [currentUser?.uid]);
