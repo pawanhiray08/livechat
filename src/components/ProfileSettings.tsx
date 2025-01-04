@@ -8,7 +8,7 @@ import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import Image from 'next/image';
 
 export default function ProfileSettings({ onClose }: { onClose: () => void }) {
-  const { user, signOut } = useAuth();
+  const { user, logout } = useAuth();
   const [username, setUsername] = useState('');
   const [photoURL, setPhotoURL] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -142,7 +142,7 @@ export default function ProfileSettings({ onClose }: { onClose: () => void }) {
             <button
               type="button"
               onClick={async () => {
-                await signOut();
+                await logout();
                 onClose();
               }}
               className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600"
