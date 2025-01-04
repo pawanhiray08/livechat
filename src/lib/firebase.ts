@@ -1,6 +1,6 @@
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, initializeFirestore, enableIndexedDbPersistence } from 'firebase/firestore';
+import { getFirestore, initializeFirestore, enableIndexedDbPersistence, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
@@ -18,21 +18,13 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0
 
 // Initialize services
 const auth = getAuth(app);
-let db;
 const storage = getStorage(app);
 
-// Enable offline persistence
-const initializeFirebase = async () => {
-  try {
-    db = initializeFirestore(app, { experimentalForceLongPolling: true });
-    await enableIndexedDbPersistence(db);
-    console.log('Offline persistence enabled');
-  } catch (err) {
-    console.error('Error initializing Firebase:', err);
-  }
-};
-
-// Initialize Firebase features
-initializeFirebase().catch(console.error);
+// Initialize Firestore with better persistence settings
+const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager()
+  })
+});
 
 export { auth, db, storage };
