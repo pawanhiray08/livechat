@@ -17,7 +17,10 @@ import {
   Timestamp,
   limit,
   writeBatch,
-  increment
+  increment,
+  getDocs,
+  startAfter,
+  QueryDocumentSnapshot
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import UserAvatar from './UserAvatar';
@@ -77,6 +80,8 @@ const formatMessageTime = (date: Date | null) => {
 
 const TYPING_TIMER_LENGTH = 3000;
 
+const MESSAGES_PER_PAGE = 25;
+
 export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowProps) {
   // State
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -85,6 +90,9 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
   const [error, setError] = useState<string | null>(null);
   const [chat, setChat] = useState<Chat | null>(null);
   const [typingTimeout, setTypingTimeout] = useState<NodeJS.Timeout | null>(null);
+  const [lastMessageDoc, setLastMessageDoc] = useState<QueryDocumentSnapshot | null>(null);
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
@@ -128,8 +136,60 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     setTypingTimeout(timeout);
   }, [typingTimeout, updateTypingStatus]);
 
+  const loadMessages = useCallback(async (isInitial: boolean = false) => {
+    if (!chatId || !currentUser?.uid || (!isInitial && !hasMoreMessages) || isLoadingMore) return;
+
+    try {
+      setIsLoadingMore(true);
+      setError(null);
+
+      let q = query(
+        collection(db, 'chats', chatId, 'messages'),
+        orderBy('timestamp', 'desc'),
+        limit(MESSAGES_PER_PAGE)
+      );
+
+      if (!isInitial && lastMessageDoc) {
+        q = query(
+          collection(db, 'chats', chatId, 'messages'),
+          orderBy('timestamp', 'desc'),
+          startAfter(lastMessageDoc),
+          limit(MESSAGES_PER_PAGE)
+        );
+      }
+
+      const snapshot = await getDocs(q);
+      const newMessages = snapshot.docs.map(doc => ({
+        id: doc.id,
+        chatId,
+        ...doc.data()
+      })) as ChatMessage[];
+
+      if (isInitial) {
+        setMessages(newMessages.reverse());
+      } else {
+        setMessages(prev => [...newMessages.reverse(), ...prev]);
+      }
+
+      setLastMessageDoc(snapshot.docs[snapshot.docs.length - 1] || null);
+      setHasMoreMessages(snapshot.docs.length === MESSAGES_PER_PAGE);
+    } catch (err) {
+      console.error('Error loading messages:', err);
+      setError('Failed to load messages. Please try again.');
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [chatId, currentUser?.uid, hasMoreMessages, isLoadingMore, lastMessageDoc]);
+
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const element = e.currentTarget;
+    if (element.scrollTop === 0 && !isLoadingMore && hasMoreMessages) {
+      loadMessages(false);
+    }
+  }, [loadMessages, isLoadingMore, hasMoreMessages]);
+
   const sendMessage = useCallback(async (text: string) => {
-    if (!chatId || !currentUser?.uid || !text.trim()) return;
+    if (!chatId || !currentUser?.uid || !text.trim() || !otherParticipantId) return;
 
     try {
       const timestamp = serverTimestamp();
@@ -142,29 +202,37 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
         recipientId: otherParticipantId
       };
 
+      const batch = writeBatch(db);
+
       // Add message to messages subcollection
       const messageRef = doc(collection(db, 'chats', chatId, 'messages'));
-      await setDoc(messageRef, messageData);
+      batch.set(messageRef, messageData);
 
-      // Update chat document with last message info
+      // Update chat document
       const chatRef = doc(db, 'chats', chatId);
-      await updateDoc(chatRef, {
+      batch.update(chatRef, {
         lastMessage: {
           text: text.trim(),
           senderId: currentUser.uid,
           timestamp
         },
         lastMessageTime: timestamp,
-        [`unreadCount.${otherParticipantId}`]: increment(1)
+        [`unreadCount.${otherParticipantId}`]: increment(1),
+        updatedAt: timestamp
       });
+
+      await batch.commit();
 
       setNewMessage('');
       scrollToBottom();
+      
+      // Clear typing indicator after sending message
+      updateTypingStatus(false);
     } catch (error) {
       console.error('Error sending message:', error);
       setError('Failed to send message. Please try again.');
     }
-  }, [chatId, currentUser?.uid, otherParticipantId, scrollToBottom]);
+  }, [chatId, currentUser?.uid, otherParticipantId, scrollToBottom, updateTypingStatus]);
 
   const handleKeyPress = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -193,94 +261,57 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     setLoading(true);
     setError(null);
 
-    const messagesRef = collection(db, 'chats', chatId, 'messages');
-    const messagesQuery = query(
-      messagesRef,
-      orderBy('timestamp', 'asc')
+    // Load initial messages
+    loadMessages(true);
+
+    // Set up real-time listener for new messages
+    const q = query(
+      collection(db, 'chats', chatId, 'messages'),
+      orderBy('timestamp', 'desc'),
+      limit(1)
     );
 
-    const unsubscribe = onSnapshot(messagesQuery, {
+    const unsubscribe = onSnapshot(q, {
       next: (snapshot) => {
-        try {
-          const newMessages: ChatMessage[] = [];
-          
-          snapshot.forEach((doc) => {
-            const data = doc.data();
-            const messageTimestamp = data.timestamp?.toDate() || new Date();
-            
-            newMessages.push({
-              id: doc.id,
-              chatId: chatId,
-              text: data.text || '',
-              senderId: data.senderId || '',
-              timestamp: messageTimestamp,
-              createdAt: data.createdAt?.toDate() || messageTimestamp,
-              read: data.read || false,
-              recipientId: data.recipientId || ''
-            });
-          });
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === 'added') {
+            const messageData = change.doc.data();
+            const newMessage = {
+              id: change.doc.id,
+              chatId,
+              ...messageData,
+              timestamp: messageData.timestamp?.toDate() || new Date(),
+              createdAt: messageData.createdAt?.toDate() || new Date()
+            } as ChatMessage;
 
-          // Sort messages by timestamp
-          newMessages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-          setMessages(newMessages);
-
-          // Mark messages as read if they're from the other user
-          const batch = writeBatch(db);
-          let hasUnread = false;
-
-          newMessages.forEach(msg => {
-            if (!msg.read && msg.senderId !== currentUser.uid) {
-              hasUnread = true;
-              const messageRef = doc(db, 'chats', chatId, 'messages', msg.id);
-              batch.update(messageRef, { 
-                read: true,
-                readAt: serverTimestamp()
-              });
-            }
-          });
-
-          if (hasUnread) {
-            const chatRef = doc(db, 'chats', chatId);
-            batch.update(chatRef, {
-              [`unreadCount.${currentUser.uid}`]: 0,
-              lastRead: {
-                [currentUser.uid]: serverTimestamp()
+            setMessages(prev => {
+              // Check if message already exists
+              if (prev.some(m => m.id === newMessage.id)) {
+                return prev;
               }
+              return [...prev, newMessage];
             });
-            batch.commit().catch(error => {
-              console.error('Error marking messages as read:', error);
-            });
-          }
 
-          // Scroll to bottom if near bottom
-          if (messagesEndRef.current) {
-            const shouldScroll = 
-              Math.abs(
-                messagesEndRef.current.getBoundingClientRect().bottom - 
-                messagesContainerRef.current?.getBoundingClientRect().bottom!
-              ) < 100;
-            
-            if (shouldScroll) {
-              messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+            // Auto-scroll for new messages
+            if (messageData.senderId !== currentUser.uid) {
+              scrollToBottom();
             }
           }
-
-          setLoading(false);
-        } catch (error) {
-          console.error('Error processing messages:', error);
-          setError('Failed to load messages');
-          setLoading(false);
-        }
+        });
       },
       error: (error) => {
-        console.error('Error in message subscription:', error);
-        setError('Failed to load messages');
-        setLoading(false);
+        console.error('Error in message listener:', error);
+        setError('Failed to receive new messages. Please refresh the page.');
       }
     });
 
-    return () => unsubscribe();
-  }, [chatId, currentUser?.uid]);
+    return () => {
+      unsubscribe();
+      setMessages([]);
+      setLastMessageDoc(null);
+      setHasMoreMessages(true);
+    };
+  }, [chatId, currentUser?.uid, loadMessages, scrollToBottom]);
 
   useEffect(() => {
     if (!chatId || !currentUser?.uid) return;
@@ -312,7 +343,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     });
 
     return () => unsubscribe();
-  }, [chatId, currentUser?.uid, updateTypingStatus]);
+  }, [chatId, currentUser?.uid]);
 
   // Presence update effect
   useEffect(() => {
@@ -502,6 +533,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
       {/* Messages container */}
       <div 
         ref={messagesContainerRef}
+        onScroll={handleScroll}
         className="flex-1 overflow-y-auto p-4 space-y-4"
       >
         {messages.map((message) => (

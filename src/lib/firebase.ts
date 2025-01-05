@@ -1,6 +1,6 @@
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, initializeFirestore, enableIndexedDbPersistence, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
+import { getFirestore, initializeFirestore, enableIndexedDbPersistence, persistentLocalCache, persistentMultipleTabManager, clearIndexedDbPersistence } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
@@ -20,13 +20,13 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0
 const auth = getAuth(app);
 const storage = getStorage(app);
 
-// Initialize Firestore with better persistence settings
+// Initialize Firestore with optimized settings for chat applications
 const db = initializeFirestore(app, {
   localCache: persistentLocalCache({
     tabManager: persistentMultipleTabManager(),
-    cacheSizeBytes: 50000000 // Set cache size to 50MB
+    cacheSizeBytes: 100000000 // Increased cache size to 100MB for better chat performance
   }),
-  experimentalForceLongPolling: true // Add long polling for better connection stability
+  // Remove experimentalForceLongPolling as it can cause connection issues
 });
 
 // Enable offline persistence with error handling
@@ -46,4 +46,17 @@ try {
   console.warn('Persistence initialization error:', err);
 }
 
+// Export initialized services
 export { auth, db, storage };
+
+// Export a function to clear cache if needed
+export const clearFirestoreCache = async () => {
+  try {
+    await clearIndexedDbPersistence(db);
+    console.log('Firestore cache cleared successfully');
+    return true;
+  } catch (error) {
+    console.error('Error clearing Firestore cache:', error);
+    return false;
+  }
+};
