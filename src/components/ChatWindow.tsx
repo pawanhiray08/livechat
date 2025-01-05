@@ -91,6 +91,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const parentRef = useRef<HTMLDivElement>(null);
   const presenceIntervalRef = useRef<NodeJS.Timeout>();
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   // Derived state
   const otherParticipantId = chat?.participants?.find(id => id !== currentUser.uid) || '';
@@ -139,13 +140,12 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     setTimeout(checkTypingTimeout, TYPING_TIMER_LENGTH);
   }, [isTyping, updateTypingStatus]);
 
-  const sendMessage = useCallback(async (text: string) => {
-    if (!text.trim() || !chatId || !chat) return;
+  const sendMessage = useCallback(async (messageText: string) => {
+    if (!messageText.trim() || !chatId || !chat) return;
 
     try {
       const batch = writeBatch(db);
-      const messageText = text.trim();
-
+      
       // Get the other participant's ID
       const otherParticipantId = chat.participants.find(id => id !== currentUser.uid);
       if (!otherParticipantId) {
@@ -170,29 +170,25 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
 
       // Update chat document with last message info and unread counts
       const chatRef = doc(db, 'chats', chatId);
-      const updates: any = {
+      const updates = {
         lastMessage: {
           text: messageText,
           senderId: currentUser.uid,
           timestamp: serverTimestamp()
         },
         lastMessageTime: serverTimestamp(),
+        [`unreadCount.${otherParticipantId}`]: increment(1),
         [`unreadCount.${currentUser.uid}`]: 0
       };
-
-      // Increment unread count for the other participant
-      updates[`unreadCount.${otherParticipantId}`] = increment(1);
 
       batch.update(chatRef, updates);
 
       // Commit both operations
       await batch.commit();
 
-      // Clear typing indicator
+      // Clear typing indicator and input
       setIsTyping(false);
       updateTypingStatus(false);
-      
-      // Clear input
       setNewMessage('');
 
       // Force scroll to bottom
@@ -257,14 +253,20 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
   }, [chatId]);
 
   useEffect(() => {
-    if (!chatId) return;
+    if (!chatId || !currentUser?.uid) return;
 
+    setLoading(true);
+    setError(null);
+
+    // Create query for messages
+    const messagesRef = collection(db, 'chats', chatId, 'messages');
     const messagesQuery = query(
-      collection(db, 'chats', chatId, 'messages'),
+      messagesRef,
       orderBy('timestamp', 'asc'),
-      limit(50)
+      limit(100)
     );
 
+    // Subscribe to messages
     const unsubscribe = onSnapshot(messagesQuery, {
       next: (snapshot) => {
         try {
@@ -272,17 +274,17 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
             const updatedMessages = [...prevMessages];
             let hasChanges = false;
 
-            snapshot.docChanges().forEach((change) => {
-              const data = change.doc.data();
-              const message = {
+            snapshot.docChanges().forEach(change => {
+              const messageData = change.doc.data();
+              const message: ChatMessage = {
                 id: change.doc.id,
-                chatId,
-                text: data.text || '',
-                senderId: data.senderId || '',
-                timestamp: data.timestamp?.toDate() || new Date(),
-                createdAt: data.createdAt || new Date(),
-                read: data.read || false,
-                recipientId: data.recipientId
+                chatId: chatId,
+                text: messageData.text || '',
+                senderId: messageData.senderId || '',
+                timestamp: messageData.timestamp?.toDate() || new Date(),
+                createdAt: messageData.createdAt?.toDate() || new Date(),
+                read: messageData.read || false,
+                recipientId: messageData.recipientId || ''
               };
 
               if (change.type === 'added') {
@@ -334,9 +336,17 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
                 });
               }
 
-              // Scroll to bottom for new messages
+              // Update scroll position
               if (messagesEndRef.current) {
-                messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+                const shouldScroll = 
+                  Math.abs(
+                    messagesEndRef.current.getBoundingClientRect().bottom - 
+                    messagesContainerRef.current?.getBoundingClientRect().bottom!
+                  ) < 100;
+                
+                if (shouldScroll) {
+                  messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+                }
               }
 
               return updatedMessages;
@@ -344,14 +354,18 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
 
             return prevMessages;
           });
+
+          setLoading(false);
         } catch (error) {
           console.error('Error processing messages:', error);
           setError('Failed to load messages');
+          setLoading(false);
         }
       },
       error: (error) => {
         console.error('Error in message subscription:', error);
         setError('Failed to load messages');
+        setLoading(false);
       }
     });
 
@@ -520,6 +534,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
         }}
       >
         <div
+          ref={messagesContainerRef}
           style={{
             height: `${rowVirtualizer.getTotalSize()}px`,
             width: '100%',
@@ -559,6 +574,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
             );
           })}
         </div>
+        <div ref={messagesEndRef} />
       </div>
 
       {/* Chat input */}
