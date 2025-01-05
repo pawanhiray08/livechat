@@ -75,7 +75,7 @@ export default function ChatSidebar({
   onShowUsers,
 }: ChatSidebarProps) {
   const [chats, setChats] = useState<Chat[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -86,119 +86,131 @@ export default function ChatSidebar({
     overscan: 5,
   });
 
-  useEffect(() => {
+  const loadChats = useCallback(async () => {
     if (!currentUser?.uid) {
       setLoading(false);
       return;
     }
 
-    let mounted = true;
+    setLoading(true);
     setError(null);
 
-    // Create a query for chats
-    const chatsQuery = query(
-      collection(db, 'chats'),
-      where('participants', 'array-contains', currentUser.uid),
-      orderBy('lastMessageTime', 'desc'),
-      limit(50)
-    );
+    try {
+      // Create a query for chats
+      const chatsQuery = query(
+        collection(db, 'chats'),
+        where('participants', 'array-contains', currentUser.uid),
+        orderBy('lastMessageTime', 'desc'),
+        limit(50)
+      );
 
-    // Subscribe to real-time updates
-    const unsubscribe = onSnapshot(chatsQuery, {
-      next: (snapshot) => {
-        if (!mounted) return;
+      // Get initial chats
+      const snapshot = await getDocs(chatsQuery);
+      const chatsData: Chat[] = [];
+      const userCache: { [key: string]: any } = {};
 
-        try {
-          const chatsData: Chat[] = [];
-          const userPromises: Promise<void>[] = [];
-          const userCache: { [key: string]: any } = {};
+      // Process chat documents
+      snapshot.docs.forEach((doc) => {
+        const data = doc.data();
+        const chat: Chat = {
+          id: doc.id,
+          participants: data.participants || [],
+          participantDetails: data.participantDetails || {},
+          createdAt: data.createdAt?.toDate() || new Date(),
+          lastMessageTime: data.lastMessageTime?.toDate() || null,
+          lastMessage: data.lastMessage ? {
+            text: data.lastMessage.text || '',
+            senderId: data.lastMessage.senderId || '',
+            timestamp: data.lastMessage.timestamp || Timestamp.now(),
+          } : null,
+          typingUsers: data.typingUsers || {},
+        };
+        chatsData.push(chat);
+      });
 
-          // First pass: collect all chats
-          snapshot.docs.forEach((doc) => {
-            const data = doc.data();
-            const chat: Chat = {
-              id: doc.id,
-              participants: data.participants || [],
-              participantDetails: data.participantDetails || {},
-              createdAt: data.createdAt?.toDate() || new Date(),
-              lastMessageTime: data.lastMessageTime?.toDate() || null,
-              lastMessage: data.lastMessage ? {
-                text: data.lastMessage.text || '',
-                senderId: data.lastMessage.senderId || '',
-                timestamp: data.lastMessage.timestamp || Timestamp.now(),
-              } : null,
-              typingUsers: data.typingUsers || {},
-            };
-            chatsData.push(chat);
+      // Update state with initial data
+      setChats(chatsData);
+      setLoading(false);
 
-            // Queue user details fetch if needed
-            const otherParticipantId = chat.participants?.find(id => id !== currentUser.uid);
-            if (otherParticipantId && !chat.participantDetails?.[otherParticipantId] && !userCache[otherParticipantId]) {
-              userCache[otherParticipantId] = true;
-              const promise = getDoc(doc(db, 'users', otherParticipantId))
-                .then(userDoc => {
-                  if (!mounted) return;
-                  if (userDoc.exists()) {
-                    const userData = userDoc.data() as FirestoreUserData;
-                    setChats(prevChats => 
-                      prevChats.map(prevChat => {
-                        if (prevChat.participants.includes(otherParticipantId)) {
-                          return {
-                            ...prevChat,
-                            participantDetails: {
-                              ...prevChat.participantDetails,
-                              [otherParticipantId]: {
-                                displayName: userData.displayName || 'Anonymous User',
-                                photoURL: userData.photoURL || null,
-                                email: userData.email || null,
-                                lastSeen: userData.lastSeen || null,
-                                online: userData.online || false,
-                              }
-                            }
-                          };
-                        }
-                        return prevChat;
-                      })
-                    );
-                  }
-                })
-                .catch(error => {
-                  console.error(`Error fetching user details for ${otherParticipantId}:`, error);
-                });
-              userPromises.push(promise);
-            }
-          });
+      // Set up real-time listener for updates
+      const unsubscribe = onSnapshot(chatsQuery, {
+        next: (snapshot) => {
+          try {
+            const updatedChats = [...chatsData];
+            
+            snapshot.docChanges().forEach((change) => {
+              const data = change.doc.data();
+              const chatIndex = updatedChats.findIndex(c => c.id === change.doc.id);
+              
+              const updatedChat: Chat = {
+                id: change.doc.id,
+                participants: data.participants || [],
+                participantDetails: data.participantDetails || {},
+                createdAt: data.createdAt?.toDate() || new Date(),
+                lastMessageTime: data.lastMessageTime?.toDate() || null,
+                lastMessage: data.lastMessage ? {
+                  text: data.lastMessage.text || '',
+                  senderId: data.lastMessage.senderId || '',
+                  timestamp: data.lastMessage.timestamp || Timestamp.now(),
+                } : null,
+                typingUsers: data.typingUsers || {},
+              };
 
-          // Update chats immediately
-          setChats(chatsData);
-          setLoading(false);
+              if (change.type === 'added' && chatIndex === -1) {
+                updatedChats.push(updatedChat);
+              } else if (change.type === 'modified' && chatIndex !== -1) {
+                updatedChats[chatIndex] = updatedChat;
+              } else if (change.type === 'removed' && chatIndex !== -1) {
+                updatedChats.splice(chatIndex, 1);
+              }
+            });
 
-          // Load user details in the background
-          Promise.all(userPromises).catch(error => {
-            console.error('Error fetching user details:', error);
-          });
-        } catch (error) {
-          console.error('Error processing chat data:', error);
-          if (mounted) {
-            setError('Failed to load chats');
-            setLoading(false);
+            // Sort chats by last message time
+            updatedChats.sort((a, b) => {
+              const timeA = a.lastMessageTime?.getTime() || 0;
+              const timeB = b.lastMessageTime?.getTime() || 0;
+              return timeB - timeA;
+            });
+
+            setChats(updatedChats);
+          } catch (error) {
+            console.error('Error processing chat updates:', error);
           }
-        }
-      },
-      error: (error) => {
-        console.error('Error in chat subscription:', error);
-        if (mounted) {
+        },
+        error: (error) => {
+          console.error('Error in chat subscription:', error);
           setError('Failed to load chats');
-          setLoading(false);
         }
-      }
-    });
+      });
+
+      return unsubscribe;
+    } catch (error) {
+      console.error('Error loading chats:', error);
+      setError('Failed to load chats');
+      setLoading(false);
+    }
+  }, [currentUser?.uid]);
+
+  // Initial load
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+
+    const initializeChats = async () => {
+      unsubscribe = await loadChats();
+    };
+
+    initializeChats();
 
     return () => {
-      mounted = false;
-      unsubscribe();
+      if (unsubscribe) {
+        unsubscribe();
+      }
     };
-  }, [currentUser?.uid]);
+  }, [loadChats]);
+
+  const handleRetry = useCallback(() => {
+    loadChats();
+  }, [loadChats]);
 
   if (loading) {
     return (
@@ -233,15 +245,12 @@ export default function ChatSidebar({
   if (error) {
     return (
       <div className="w-full md:w-80 bg-white border-r border-gray-200 flex flex-col h-full">
-        <div className="p-4 border-b border-gray-200">
-          <h2 className="text-xl font-semibold">Chats</h2>
-        </div>
-        <div className="flex-1 flex items-center justify-center p-4">
+        <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
-            <p className="text-red-500 mb-4">{error}</p>
+            <p className="text-gray-500 mb-4">{error}</p>
             <button
-              onClick={() => window.location.reload()}
-              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+              onClick={handleRetry}
+              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
             >
               Retry
             </button>
