@@ -417,8 +417,45 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
   // Loading state
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+      <div className="flex flex-col h-full bg-white">
+        <div className="p-4 border-b flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="h-10 w-10 rounded-full bg-gray-200 animate-pulse"></div>
+            <div className="space-y-2">
+              <div className="h-4 w-24 bg-gray-200 animate-pulse rounded"></div>
+              <div className="h-3 w-16 bg-gray-200 animate-pulse rounded"></div>
+            </div>
+          </div>
+          <div className="h-8 w-8 rounded bg-gray-200 animate-pulse"></div>
+        </div>
+        
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {[...Array(6)].map((_, i) => (
+            <div
+              key={i}
+              className={`flex ${i % 2 === 0 ? 'justify-end' : 'justify-start'}`}
+            >
+              <div
+                className={`max-w-[70%] rounded-lg p-3 ${
+                  i % 2 === 0 ? 'bg-gray-100' : 'bg-gray-50'
+                }`}
+              >
+                <div className="space-y-2">
+                  <div className={`h-3 ${i % 2 === 0 ? 'w-48' : 'w-32'} bg-gray-200 animate-pulse rounded`}></div>
+                  <div className={`h-3 ${i % 2 === 0 ? 'w-32' : 'w-40'} bg-gray-200 animate-pulse rounded`}></div>
+                </div>
+                <div className="h-2 w-16 bg-gray-200 animate-pulse rounded mt-2"></div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="p-4 border-t">
+          <div className="flex items-center space-x-2">
+            <div className="flex-1 h-10 bg-gray-200 animate-pulse rounded-lg"></div>
+            <div className="h-10 w-16 bg-gray-200 animate-pulse rounded-lg"></div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -426,45 +463,17 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
   // Error state
   if (error) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-red-500 mb-4">{error}</p>
-          <button
-            onClick={() => {
-              setError(null);
-              setLoading(true);
-              const chatRef = doc(db, 'chats', chatId);
-              getDoc(chatRef)
-                .then((doc) => {
-                  if (doc.exists()) {
-                    const data = doc.data();
-                    setChat({
-                      id: doc.id,
-                      participants: data.participants || [],
-                      participantDetails: data.participantDetails || {},
-                      createdAt: data.createdAt?.toDate() || new Date(),
-                      lastMessageTime: data.lastMessageTime?.toDate() || null,
-                      lastMessage: data.lastMessage || null,
-                      typingUsers: data.typingUsers || {},
-                      unreadCount: data.unreadCount || {}
-                    });
-                    setLoading(false);
-                  } else {
-                    setError('Chat not found');
-                    setLoading(false);
-                  }
-                })
-                .catch((err) => {
-                  console.error('Error retrying chat load:', err);
-                  setError('Failed to load chat. Please try again.');
-                  setLoading(false);
-                });
-            }}
-            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
-          >
-            Retry
-          </button>
-        </div>
+      <div className="flex flex-col items-center justify-center h-full bg-white p-4">
+        <div className="text-red-500 mb-4">{error}</div>
+        <button
+          onClick={() => {
+            setError(null);
+            setLoading(true);
+          }}
+          className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+        >
+          Retry
+        </button>
       </div>
     );
   }

@@ -96,76 +96,108 @@ export default function ChatSidebar({
     setError(null);
 
     try {
-      // Create a query for chats
+      // Create a query for chats with a limit
       const chatsQuery = query(
         collection(db, 'chats'),
         where('participants', 'array-contains', currentUser.uid),
-        orderBy('lastMessageTime', 'desc')
+        orderBy('lastMessageTime', 'desc'),
+        limit(20) // Limit initial load to 20 chats
       );
 
       // Set up real-time listener for chat updates
-      const unsubscribe = onSnapshot(chatsQuery, async (snapshot) => {
-        try {
-          const chatsData: Chat[] = [];
-          
-          // Process each chat document
-          for (const doc of snapshot.docs) {
-            const data = doc.data();
+      const unsubscribe = onSnapshot(chatsQuery, {
+        next: async (snapshot) => {
+          try {
+            const chatsData: Chat[] = [];
+            const userDetailsCache: { [key: string]: UserData } = {};
             
-            // Ensure participant details exist
-            const participantDetails: { [key: string]: UserData } = {};
-            for (const participantId of data.participants || []) {
-              if (!data.participantDetails?.[participantId]) {
-                // Fetch user details if missing
-                const userQuery = query(
-                  collection(db, 'users'),
-                  where('__name__', '==', participantId),
-                  limit(1)
-                );
-                const userSnapshot = await getDocs(userQuery);
-                const userData = userSnapshot.docs[0]?.data() as FirestoreUserData;
-                
-                if (userData) {
+            // Process each chat document
+            for (const doc of snapshot.docs) {
+              const data = doc.data();
+              
+              // Ensure participant details exist
+              const participantDetails: { [key: string]: UserData } = {};
+              for (const participantId of data.participants || []) {
+                // First check the cache
+                if (userDetailsCache[participantId]) {
+                  participantDetails[participantId] = userDetailsCache[participantId];
+                  continue;
+                }
+
+                // Then check existing details
+                if (data.participantDetails?.[participantId]) {
+                  participantDetails[participantId] = data.participantDetails[participantId];
+                  userDetailsCache[participantId] = data.participantDetails[participantId];
+                  continue;
+                }
+
+                // Finally, fetch if not found
+                try {
+                  const userQuery = query(
+                    collection(db, 'users'),
+                    where('__name__', '==', participantId),
+                    limit(1)
+                  );
+                  const userSnapshot = await getDocs(userQuery);
+                  const userData = userSnapshot.docs[0]?.data() as FirestoreUserData;
+                  
+                  if (userData) {
+                    const userDetails = {
+                      displayName: userData.displayName || 'Unknown User',
+                      photoURL: userData.photoURL || null,
+                      email: userData.email || null,
+                      lastSeen: userData.lastSeen || null,
+                      online: userData.online || false,
+                    };
+                    participantDetails[participantId] = userDetails;
+                    userDetailsCache[participantId] = userDetails;
+                  }
+                } catch (userError) {
+                  console.error(`Error fetching user ${participantId}:`, userError);
+                  // Use placeholder data if fetch fails
                   participantDetails[participantId] = {
-                    displayName: userData.displayName || 'Unknown User',
-                    photoURL: userData.photoURL || null,
-                    email: userData.email || null,
-                    lastSeen: userData.lastSeen || null,
-                    online: userData.online || false,
+                    displayName: 'Unknown User',
+                    photoURL: null,
+                    email: null,
+                    lastSeen: null,
+                    online: false,
                   };
                 }
-              } else {
-                participantDetails[participantId] = data.participantDetails[participantId];
               }
+
+              const chat: Chat = {
+                id: doc.id,
+                participants: data.participants || [],
+                participantDetails,
+                createdAt: data.createdAt?.toDate() || new Date(),
+                lastMessageTime: data.lastMessageTime?.toDate() || null,
+                lastMessage: data.lastMessage ? {
+                  text: data.lastMessage.text || '',
+                  senderId: data.lastMessage.senderId || '',
+                  timestamp: data.lastMessage.timestamp || null,
+                } : null,
+                typingUsers: data.typingUsers || {},
+              };
+              chatsData.push(chat);
             }
 
-            const chat: Chat = {
-              id: doc.id,
-              participants: data.participants || [],
-              participantDetails,
-              createdAt: data.createdAt?.toDate() || new Date(),
-              lastMessageTime: data.lastMessageTime?.toDate() || null,
-              lastMessage: data.lastMessage ? {
-                text: data.lastMessage.text || '',
-                senderId: data.lastMessage.senderId || '',
-                timestamp: data.lastMessage.timestamp || null,
-              } : null,
-              typingUsers: data.typingUsers || {},
-            };
-            chatsData.push(chat);
+            // Sort chats by last message time
+            chatsData.sort((a, b) => {
+              const timeA = a.lastMessageTime?.getTime() || 0;
+              const timeB = b.lastMessageTime?.getTime() || 0;
+              return timeB - timeA;
+            });
+
+            setChats(chatsData);
+            setLoading(false);
+          } catch (error) {
+            console.error('Error processing chats:', error);
+            setError('Failed to load chats');
+            setLoading(false);
           }
-
-          // Sort chats by last message time
-          chatsData.sort((a, b) => {
-            const timeA = a.lastMessageTime?.getTime() || 0;
-            const timeB = b.lastMessageTime?.getTime() || 0;
-            return timeB - timeA;
-          });
-
-          setChats(chatsData);
-          setLoading(false);
-        } catch (error) {
-          console.error('Error processing chats:', error);
+        },
+        error: (error) => {
+          console.error('Error in chat subscription:', error);
           setError('Failed to load chats');
           setLoading(false);
         }
@@ -185,29 +217,27 @@ export default function ChatSidebar({
 
   if (loading) {
     return (
-      <div className="w-full md:w-80 bg-white border-r border-gray-200 flex flex-col h-full">
-        <div className="p-4 border-b border-gray-200">
-          <div className="animate-pulse flex items-center justify-between">
-            <div className="h-8 w-24 bg-gray-200 rounded"></div>
-            <div className="flex space-x-2">
-              <div className="h-8 w-8 bg-gray-200 rounded-full"></div>
-              <div className="h-8 w-8 bg-gray-200 rounded-full"></div>
-              <div className="h-8 w-8 bg-gray-200 rounded-full"></div>
+      <div className="flex flex-col h-full bg-white border-r">
+        <div className="p-4 border-b">
+          <div className="flex items-center justify-between mb-4">
+            <div className="h-10 w-10 rounded-full bg-gray-200 animate-pulse"></div>
+            <div className="space-x-2">
+              <div className="h-8 w-8 rounded bg-gray-200 animate-pulse inline-block"></div>
+              <div className="h-8 w-8 rounded bg-gray-200 animate-pulse inline-block"></div>
             </div>
           </div>
+          <div className="h-8 w-3/4 bg-gray-200 animate-pulse rounded"></div>
         </div>
-        <div className="flex-1 overflow-hidden">
-          <div className="animate-pulse p-4 space-y-4">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="flex items-center space-x-4">
-                <div className="h-12 w-12 bg-gray-200 rounded-full"></div>
-                <div className="flex-1 space-y-2">
-                  <div className="h-4 bg-gray-200 rounded w-3/4"></div>
-                  <div className="h-3 bg-gray-200 rounded w-1/2"></div>
-                </div>
+        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className="flex items-center space-x-3 p-2">
+              <div className="h-12 w-12 rounded-full bg-gray-200 animate-pulse"></div>
+              <div className="flex-1 space-y-2">
+                <div className="h-4 w-1/4 bg-gray-200 animate-pulse rounded"></div>
+                <div className="h-3 w-3/4 bg-gray-200 animate-pulse rounded"></div>
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
       </div>
     );
