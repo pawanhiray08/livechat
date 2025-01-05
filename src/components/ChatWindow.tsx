@@ -33,6 +33,7 @@ interface ChatMessage {
   timestamp: Date;
   createdAt: Date;
   read: boolean;
+  recipientId: string;
 }
 
 interface ChatParticipantDetails {
@@ -55,6 +56,7 @@ interface Chat {
     timestamp: Timestamp;
   } | null;
   typingUsers: Record<string, boolean>;
+  unreadCount: Record<string, number>;
 }
 
 interface ChatWindowProps {
@@ -137,10 +139,16 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
   }, [isTyping, updateTypingStatus]);
 
   const sendMessage = useCallback(async (text: string) => {
-    if (!text.trim() || !chatId) return;
+    if (!text.trim() || !chatId || !chat) return;
 
     try {
       const batch = writeBatch(db);
+
+      // Get the other participant's ID
+      const otherParticipantId = chat.participants.find(id => id !== currentUser.uid);
+      if (!otherParticipantId) {
+        throw new Error('No other participant found in chat');
+      }
 
       // Create message document
       const messageData = {
@@ -149,7 +157,8 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
         timestamp: serverTimestamp(),
         createdAt: new Date(),
         read: false,
-        chatId: chatId
+        chatId: chatId,
+        recipientId: otherParticipantId
       };
 
       // Add message to messages subcollection
@@ -157,9 +166,9 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
       const newMessageRef = doc(messagesRef);
       batch.set(newMessageRef, messageData);
 
-      // Update chat document with last message info
+      // Update chat document with last message info and unread counts
       const chatRef = doc(db, 'chats', chatId);
-      batch.update(chatRef, {
+      const updates: any = {
         lastMessage: {
           text: text.trim(),
           senderId: currentUser.uid,
@@ -167,7 +176,12 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
         },
         lastMessageTime: serverTimestamp(),
         [`unreadCount.${currentUser.uid}`]: 0
-      });
+      };
+
+      // Increment unread count for the other participant
+      updates[`unreadCount.${otherParticipantId}`] = (chat.unreadCount?.[otherParticipantId] || 0) + 1;
+
+      batch.update(chatRef, updates);
 
       // Commit both operations
       await batch.commit();
@@ -182,7 +196,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
       console.error('Error sending message:', error);
       throw new Error('Failed to send message. Please try again.');
     }
-  }, [chatId, currentUser?.uid, updateTypingStatus]);
+  }, [chatId, currentUser?.uid, updateTypingStatus, chat]);
 
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setNewMessage(e.target.value);
@@ -204,6 +218,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
           lastMessageTime: data.lastMessageTime?.toDate() || null,
           lastMessage: data.lastMessage || null,
           typingUsers: data.typingUsers || {},
+          unreadCount: data.unreadCount || {}
         });
         setLoading(false);
       } else {
@@ -234,18 +249,22 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
           const newMessages: ChatMessage[] = [];
           snapshot.docChanges().forEach((change) => {
             const data = change.doc.data();
-            const message = {
-              id: change.doc.id,
-              chatId,
-              text: data.text || '',
-              senderId: data.senderId || '',
-              timestamp: data.timestamp?.toDate() || new Date(),
-              createdAt: data.createdAt || new Date(),
-              read: data.read || false
-            };
-
             if (change.type === 'added') {
-              newMessages.push(message);
+              const message = {
+                id: change.doc.id,
+                chatId,
+                text: data.text || '',
+                senderId: data.senderId || '',
+                timestamp: data.timestamp?.toDate() || new Date(),
+                createdAt: data.createdAt || new Date(),
+                read: data.read || false,
+                recipientId: data.recipientId
+              };
+
+              // Only add messages that are part of this chat
+              if (message.senderId === currentUser.uid || message.recipientId === currentUser.uid) {
+                newMessages.push(message);
+              }
             }
           });
 
@@ -274,6 +293,12 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
                 hasUnread = true;
                 const messageRef = doc(db, 'chats', chatId, 'messages', msg.id);
                 batch.update(messageRef, { read: true });
+
+                // Update unread count in chat document
+                const chatRef = doc(db, 'chats', chatId);
+                batch.update(chatRef, {
+                  [`unreadCount.${currentUser.uid}`]: 0
+                });
               }
             });
 
@@ -383,6 +408,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
                       lastMessageTime: data.lastMessageTime?.toDate() || null,
                       lastMessage: data.lastMessage || null,
                       typingUsers: data.typingUsers || {},
+                      unreadCount: data.unreadCount || {}
                     });
                     setLoading(false);
                   } else {
