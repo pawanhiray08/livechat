@@ -96,6 +96,7 @@ export default function ChatSidebar({
     setError(null);
 
     try {
+      // Create a query for chats
       const chatsQuery = query(
         collection(db, 'chats'),
         where('participants', 'array-contains', currentUser.uid),
@@ -103,97 +104,82 @@ export default function ChatSidebar({
         limit(50)
       );
 
-      const unsubscribe = onSnapshot(chatsQuery, async (snapshot) => {
-        try {
-          const chatsData: Chat[] = [];
-          
-          for (const doc of snapshot.docs) {
-            const data = doc.data();
-            const chat: Chat = {
-              id: doc.id,
-              participants: data.participants || [],
-              participantDetails: data.participantDetails || {},
-              createdAt: data.createdAt?.toDate() || new Date(),
-              lastMessageTime: data.lastMessageTime?.toDate() || null,
-              lastMessage: data.lastMessage ? {
-                text: data.lastMessage.text || '',
-                senderId: data.lastMessage.senderId || '',
-                timestamp: data.lastMessage.timestamp || Timestamp.now(),
-              } : null,
-              typingUsers: data.typingUsers || {},
-            };
+      // Subscribe to real-time updates
+      const unsubscribe = onSnapshot(chatsQuery, {
+        next: async (snapshot) => {
+          try {
+            const chatsData: Chat[] = [];
+            const userDetailsPromises: Promise<void>[] = [];
 
-            // Get other participant's details if not already in the chat data
-            const otherParticipantId = chat.participants?.find(id => id !== currentUser.uid);
-            if (otherParticipantId && !chat.participantDetails?.[otherParticipantId]) {
-              try {
-                const usersRef = collection(db, 'users');
-                const userQuery = query(usersRef, where('__name__', '==', otherParticipantId));
-                const userSnapshot = await getDocs(userQuery);
-                
-                if (!userSnapshot.empty) {
-                  const userDoc = userSnapshot.docs[0];
-                  const userData = userDoc.data() as FirestoreUserData;
-                  
-                  // Initialize participantDetails if it doesn't exist
-                  if (!chat.participantDetails) {
-                    chat.participantDetails = {};
+            // First pass: collect all chats and create promises for user details
+            snapshot.docs.forEach((doc) => {
+              const data = doc.data();
+              const chat: Chat = {
+                id: doc.id,
+                participants: data.participants || [],
+                participantDetails: data.participantDetails || {},
+                createdAt: data.createdAt?.toDate() || new Date(),
+                lastMessageTime: data.lastMessageTime?.toDate() || null,
+                lastMessage: data.lastMessage ? {
+                  text: data.lastMessage.text || '',
+                  senderId: data.lastMessage.senderId || '',
+                  timestamp: data.lastMessage.timestamp || Timestamp.now(),
+                } : null,
+                typingUsers: data.typingUsers || {},
+              };
+
+              const otherParticipantId = chat.participants?.find(id => id !== currentUser.uid);
+              if (otherParticipantId && !chat.participantDetails?.[otherParticipantId]) {
+                const promise = (async () => {
+                  try {
+                    const userDoc = await getDoc(doc(db, 'users', otherParticipantId));
+                    if (userDoc.exists()) {
+                      const userData = userDoc.data() as FirestoreUserData;
+                      if (!chat.participantDetails) {
+                        chat.participantDetails = {};
+                      }
+                      chat.participantDetails[otherParticipantId] = {
+                        displayName: userData.displayName || 'Anonymous User',
+                        photoURL: userData.photoURL || null,
+                        email: userData.email || null,
+                        lastSeen: userData.lastSeen || null,
+                        online: userData.online || false,
+                      };
+                    }
+                  } catch (error) {
+                    console.error(`Error fetching user details for ${otherParticipantId}:`, error);
                   }
-                  
-                  chat.participantDetails[otherParticipantId] = {
-                    displayName: userData.displayName || 'Anonymous User',
-                    photoURL: userData.photoURL || null,
-                    email: userData.email || null,
-                    lastSeen: userData.lastSeen || null,
-                    online: userData.online || false,
-                  };
-                } else {
-                  console.warn(`User document not found for ID: ${otherParticipantId}`);
-                  chat.participantDetails[otherParticipantId] = {
-                    displayName: 'Deleted User',
-                    photoURL: null,
-                    email: null,
-                    lastSeen: null,
-                    online: false,
-                  };
-                }
-              } catch (error) {
-                console.error('Error fetching participant details:', error);
-                // Set default values if there's an error
-                chat.participantDetails[otherParticipantId] = {
-                  displayName: 'Unknown User',
-                  photoURL: null,
-                  email: null,
-                  lastSeen: null,
-                  online: false,
-                };
+                })();
+                userDetailsPromises.push(promise);
               }
-            }
-            
-            chatsData.push(chat);
+              chatsData.push(chat);
+            });
+
+            // Wait for all user details to be fetched
+            await Promise.all(userDetailsPromises);
+
+            // Update state with complete chat data
+            setChats(chatsData);
+            setLoading(false);
+          } catch (error) {
+            console.error('Error processing chat data:', error);
+            setError('Failed to load chats');
+            setLoading(false);
           }
-          
-          setChats(chatsData);
-          setLoading(false);
-          setError(null);
-        } catch (error) {
-          console.error('Error processing chats:', error);
+        },
+        error: (error) => {
+          console.error('Error in chat subscription:', error);
           setError('Failed to load chats');
           setLoading(false);
         }
-      }, (error) => {
-        console.error('Error fetching chats:', error);
-        setError('Failed to load chats');
-        setLoading(false);
       });
 
       return () => {
         unsubscribe();
-        setLoading(false);
       };
     } catch (error) {
-      console.error('Error setting up chat listener:', error);
-      setError('Failed to initialize chat loading');
+      console.error('Error setting up chat subscription:', error);
+      setError('Failed to load chats');
       setLoading(false);
     }
   }, [currentUser?.uid]);
