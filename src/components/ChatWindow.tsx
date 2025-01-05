@@ -16,7 +16,8 @@ import {
   setDoc,
   Timestamp,
   limit,
-  writeBatch
+  writeBatch,
+  increment
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import UserAvatar from './UserAvatar';
@@ -143,6 +144,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
 
     try {
       const batch = writeBatch(db);
+      const messageText = text.trim();
 
       // Get the other participant's ID
       const otherParticipantId = chat.participants.find(id => id !== currentUser.uid);
@@ -152,7 +154,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
 
       // Create message document
       const messageData = {
-        text: text.trim(),
+        text: messageText,
         senderId: currentUser.uid,
         timestamp: serverTimestamp(),
         createdAt: new Date(),
@@ -170,7 +172,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
       const chatRef = doc(db, 'chats', chatId);
       const updates: any = {
         lastMessage: {
-          text: text.trim(),
+          text: messageText,
           senderId: currentUser.uid,
           timestamp: serverTimestamp()
         },
@@ -179,7 +181,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
       };
 
       // Increment unread count for the other participant
-      updates[`unreadCount.${otherParticipantId}`] = (chat.unreadCount?.[otherParticipantId] || 0) + 1;
+      updates[`unreadCount.${otherParticipantId}`] = increment(1);
 
       batch.update(chatRef, updates);
 
@@ -192,11 +194,31 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
       
       // Clear input
       setNewMessage('');
+
+      // Force scroll to bottom
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      }
     } catch (error) {
       console.error('Error sending message:', error);
       throw new Error('Failed to send message. Please try again.');
     }
   }, [chatId, currentUser?.uid, updateTypingStatus, chat]);
+
+  const handleKeyPress = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (newMessage.trim()) {
+        sendMessage(newMessage);
+      }
+    }
+  }, [newMessage, sendMessage]);
+
+  const handleSendClick = useCallback(() => {
+    if (newMessage.trim()) {
+      sendMessage(newMessage);
+    }
+  }, [newMessage, sendMessage]);
 
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setNewMessage(e.target.value);
@@ -246,10 +268,12 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     const unsubscribe = onSnapshot(messagesQuery, {
       next: (snapshot) => {
         try {
-          const newMessages: ChatMessage[] = [];
-          snapshot.docChanges().forEach((change) => {
-            const data = change.doc.data();
-            if (change.type === 'added') {
+          setMessages(prevMessages => {
+            const updatedMessages = [...prevMessages];
+            let hasChanges = false;
+
+            snapshot.docChanges().forEach((change) => {
+              const data = change.doc.data();
               const message = {
                 id: change.doc.id,
                 chatId,
@@ -261,58 +285,65 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
                 recipientId: data.recipientId
               };
 
-              // Only add messages that are part of this chat
-              if (message.senderId === currentUser.uid || message.recipientId === currentUser.uid) {
-                newMessages.push(message);
-              }
-            }
-          });
-
-          if (newMessages.length > 0) {
-            setMessages(prev => {
-              const combined = [...prev];
-              
-              // Add new messages
-              newMessages.forEach(newMsg => {
-                const existingIndex = combined.findIndex(msg => msg.id === newMsg.id);
+              if (change.type === 'added') {
+                // Check if message already exists
+                const existingIndex = updatedMessages.findIndex(m => m.id === message.id);
                 if (existingIndex === -1) {
-                  combined.push(newMsg);
+                  updatedMessages.push(message);
+                  hasChanges = true;
+                }
+              } else if (change.type === 'modified') {
+                const index = updatedMessages.findIndex(m => m.id === message.id);
+                if (index !== -1) {
+                  updatedMessages[index] = message;
+                  hasChanges = true;
+                }
+              } else if (change.type === 'removed') {
+                const index = updatedMessages.findIndex(m => m.id === message.id);
+                if (index !== -1) {
+                  updatedMessages.splice(index, 1);
+                  hasChanges = true;
+                }
+              }
+            });
+
+            if (hasChanges) {
+              // Sort messages by timestamp
+              updatedMessages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+              
+              // Mark messages as read if they're from the other user
+              const batch = writeBatch(db);
+              let hasUnread = false;
+
+              updatedMessages.forEach(msg => {
+                if (!msg.read && msg.senderId !== currentUser.uid) {
+                  hasUnread = true;
+                  const messageRef = doc(db, 'chats', chatId, 'messages', msg.id);
+                  batch.update(messageRef, { read: true });
                 }
               });
 
-              // Sort by timestamp
-              return combined.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-            });
-
-            // Mark messages as read in a batch
-            const batch = writeBatch(db);
-            let hasUnread = false;
-
-            newMessages.forEach(msg => {
-              if (!msg.read && msg.senderId !== currentUser.uid) {
-                hasUnread = true;
-                const messageRef = doc(db, 'chats', chatId, 'messages', msg.id);
-                batch.update(messageRef, { read: true });
-
-                // Update unread count in chat document
+              if (hasUnread) {
+                // Update chat unread count
                 const chatRef = doc(db, 'chats', chatId);
                 batch.update(chatRef, {
                   [`unreadCount.${currentUser.uid}`]: 0
                 });
+                batch.commit().catch(error => {
+                  console.error('Error marking messages as read:', error);
+                });
               }
-            });
 
-            if (hasUnread) {
-              batch.commit().catch(error => {
-                console.error('Error marking messages as read:', error);
-              });
+              // Scroll to bottom for new messages
+              if (messagesEndRef.current) {
+                messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+              }
+
+              return updatedMessages;
             }
 
-            // Scroll to bottom for new messages
-            if (messagesEndRef.current) {
-              messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-            }
-          }
+            return prevMessages;
+          });
         } catch (error) {
           console.error('Error processing messages:', error);
           setError('Failed to load messages');
@@ -532,10 +563,11 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
 
       {/* Chat input */}
       <div className="p-4 border-t border-gray-200">
-        <form onSubmit={(e) => { e.preventDefault(); sendMessage(newMessage); }} className="flex space-x-4">
+        <form onSubmit={(e) => { e.preventDefault(); handleSendClick(); }} className="flex space-x-4">
           <textarea
             value={newMessage}
             onChange={handleInputChange}
+            onKeyPress={handleKeyPress}
             placeholder="Type a message..."
             className="flex-1 resize-none rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2"
             rows={1}
