@@ -1,5 +1,5 @@
 import { initializeApp, getApps } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { getAuth, setPersistence, browserLocalPersistence, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { getFirestore, initializeFirestore, enableIndexedDbPersistence, persistentLocalCache, persistentMultipleTabManager, clearIndexedDbPersistence } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
@@ -18,6 +18,16 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0
 
 // Initialize services
 const auth = getAuth(app);
+
+// Set authentication persistence to local storage
+setPersistence(auth, browserLocalPersistence)
+  .then(() => {
+    console.log('Authentication persistence set to local storage');
+  })
+  .catch((error) => {
+    console.error('Error setting auth persistence:', error);
+  });
+
 const storage = getStorage(app);
 
 // Initialize Firestore with optimized settings for chat applications
@@ -58,5 +68,18 @@ export const clearFirestoreCache = async () => {
   } catch (error) {
     console.error('Error clearing Firestore cache:', error);
     return false;
+  }
+};
+
+// Export Google sign-in function
+export const signInWithGoogle = async () => {
+  try {
+    const provider = new GoogleAuthProvider();
+    // Using popup-based sign-in for better cookie compliance
+    const result = await signInWithPopup(auth, provider);
+    return result.user;
+  } catch (error) {
+    console.error('Error signing in with Google:', error);
+    throw error;
   }
 };
