@@ -100,8 +100,8 @@ export default function ChatSidebar({
       const chatsQuery = query(
         collection(db, 'chats'),
         where('participants', 'array-contains', currentUser.uid),
-        orderBy('lastMessageTime', 'desc'),
-        limit(20) // Limit initial load to 20 chats
+        orderBy('updatedAt', 'desc'), // Use updatedAt for proper ordering
+        limit(20)
       );
 
       // Set up real-time listener for chat updates
@@ -115,9 +115,15 @@ export default function ChatSidebar({
             for (const doc of snapshot.docs) {
               const data = doc.data();
               
+              // Skip invalid chats
+              if (!data.participants || !Array.isArray(data.participants)) {
+                console.error('Invalid chat document:', doc.id);
+                continue;
+              }
+
               // Ensure participant details exist
               const participantDetails: { [key: string]: UserData } = {};
-              for (const participantId of data.participants || []) {
+              for (const participantId of data.participants) {
                 // First check the cache
                 if (userDetailsCache[participantId]) {
                   participantDetails[participantId] = userDetailsCache[participantId];
@@ -154,7 +160,6 @@ export default function ChatSidebar({
                   }
                 } catch (userError) {
                   console.error(`Error fetching user ${participantId}:`, userError);
-                  // Use placeholder data if fetch fails
                   participantDetails[participantId] = {
                     displayName: 'Unknown User',
                     photoURL: null,
@@ -167,7 +172,7 @@ export default function ChatSidebar({
 
               const chat: Chat = {
                 id: doc.id,
-                participants: data.participants || [],
+                participants: data.participants,
                 participantDetails,
                 createdAt: data.createdAt?.toDate() || new Date(),
                 lastMessageTime: data.lastMessageTime?.toDate() || null,
@@ -181,7 +186,7 @@ export default function ChatSidebar({
               chatsData.push(chat);
             }
 
-            // Sort chats by last message time
+            // Sort chats by last message time or updatedAt
             chatsData.sort((a, b) => {
               const timeA = a.lastMessageTime?.getTime() || 0;
               const timeB = b.lastMessageTime?.getTime() || 0;
