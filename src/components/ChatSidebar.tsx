@@ -106,26 +106,67 @@ export default function ChatSidebar({
 
       // Get initial chats
       const snapshot = await getDocs(chatsQuery);
+      if (snapshot.empty) {
+        setChats([]);
+        setLoading(false);
+        return;
+      }
+
       const chatsData: Chat[] = [];
-      const userCache: { [key: string]: any } = {};
 
       // Process chat documents
-      snapshot.docs.forEach((doc) => {
-        const data = doc.data();
-        const chat: Chat = {
-          id: doc.id,
-          participants: data.participants || [],
-          participantDetails: data.participantDetails || {},
-          createdAt: data.createdAt?.toDate() || new Date(),
-          lastMessageTime: data.lastMessageTime?.toDate() || null,
-          lastMessage: data.lastMessage ? {
-            text: data.lastMessage.text || '',
-            senderId: data.lastMessage.senderId || '',
-            timestamp: data.lastMessage.timestamp || Timestamp.now(),
-          } : null,
-          typingUsers: data.typingUsers || {},
-        };
-        chatsData.push(chat);
+      for (const doc of snapshot.docs) {
+        try {
+          const data = doc.data();
+          
+          // Ensure participant details exist for all participants
+          const participantDetails: { [key: string]: UserData } = {};
+          for (const participantId of data.participants || []) {
+            if (!data.participantDetails?.[participantId]) {
+              // Fetch user details if missing
+              const userDoc = await getDoc(doc(db, 'users', participantId));
+              const userData = userDoc.data() as FirestoreUserData;
+              
+              if (userData) {
+                participantDetails[participantId] = {
+                  displayName: userData.displayName || 'Unknown User',
+                  photoURL: userData.photoURL || null,
+                  email: userData.email || null,
+                  lastSeen: userData.lastSeen || null,
+                  online: userData.online || false,
+                };
+              }
+            } else {
+              participantDetails[participantId] = data.participantDetails[participantId];
+            }
+          }
+
+          const chat: Chat = {
+            id: doc.id,
+            participants: data.participants || [],
+            participantDetails,
+            createdAt: data.createdAt?.toDate() || new Date(),
+            lastMessageTime: data.lastMessageTime?.toDate() || null,
+            lastMessage: data.lastMessage ? {
+              text: data.lastMessage.text || '',
+              senderId: data.lastMessage.senderId || '',
+              timestamp: data.lastMessage.timestamp || Timestamp.now(),
+            } : null,
+            typingUsers: data.typingUsers || {},
+          };
+          chatsData.push(chat);
+        } catch (docError) {
+          console.error(`Error processing chat document ${doc.id}:`, docError);
+          // Continue with other documents even if one fails
+          continue;
+        }
+      }
+
+      // Sort chats by last message time
+      chatsData.sort((a, b) => {
+        const timeA = a.lastMessageTime?.getTime() || 0;
+        const timeB = b.lastMessageTime?.getTime() || 0;
+        return timeB - timeA;
       });
 
       // Update state with initial data
