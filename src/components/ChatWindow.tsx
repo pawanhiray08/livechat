@@ -85,6 +85,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
   const [error, setError] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [typingUsers, setTypingUsers] = useState<{[key: string]: boolean}>({});
 
   // Refs
   const lastTypingTime = useRef<number>(0);
@@ -92,6 +93,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
   const parentRef = useRef<HTMLDivElement>(null);
   const presenceIntervalRef = useRef<NodeJS.Timeout>();
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout>();
 
   // Derived state
   const otherParticipantId = chat?.participants?.find(id => id !== currentUser.uid) || '';
@@ -109,7 +111,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
   }, []);
 
   const updateTypingStatus = useCallback(async (isTyping: boolean) => {
-    if (!currentUser?.uid || !chatId) return;
+    if (!currentUser?.uid || !chatId || !chat) return;
     
     const chatRef = doc(db, 'chats', chatId);
     try {
@@ -119,25 +121,24 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     } catch (error) {
       console.error('Error updating typing status:', error);
     }
-  }, [chatId, currentUser?.uid]);
+  }, [chatId, currentUser?.uid, chat]);
 
   const handleTyping = useCallback(() => {
     if (!isTyping) {
       setIsTyping(true);
       updateTypingStatus(true);
     }
-    lastTypingTime.current = Date.now();
-    
-    const checkTypingTimeout = () => {
-      const timeNow = Date.now();
-      const timeDiff = timeNow - lastTypingTime.current;
-      if (timeDiff >= TYPING_TIMER_LENGTH && isTyping) {
-        setIsTyping(false);
-        updateTypingStatus(false);
-      }
-    };
 
-    setTimeout(checkTypingTimeout, TYPING_TIMER_LENGTH);
+    // Clear existing timeout
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+
+    // Set new timeout
+    typingTimeoutRef.current = setTimeout(() => {
+      setIsTyping(false);
+      updateTypingStatus(false);
+    }, TYPING_TIMER_LENGTH);
   }, [isTyping, updateTypingStatus]);
 
   const sendMessage = useCallback(async (messageText: string) => {
@@ -238,15 +239,12 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
           typingUsers: data.typingUsers || {},
           unreadCount: data.unreadCount || {}
         });
+        setTypingUsers(data.typingUsers || {});
         setLoading(false);
       } else {
         setError('Chat not found');
         setLoading(false);
       }
-    }, (err) => {
-      console.error('Error loading chat:', err);
-      setError('Failed to load chat');
-      setLoading(false);
     });
 
     return () => unsubscribe();
@@ -258,102 +256,69 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     setLoading(true);
     setError(null);
 
-    // Create query for messages
     const messagesRef = collection(db, 'chats', chatId, 'messages');
     const messagesQuery = query(
       messagesRef,
-      orderBy('timestamp', 'asc'),
-      limit(100)
+      orderBy('timestamp', 'asc')
     );
 
-    // Subscribe to messages
     const unsubscribe = onSnapshot(messagesQuery, {
       next: (snapshot) => {
         try {
-          setMessages(prevMessages => {
-            const updatedMessages = [...prevMessages];
-            let hasChanges = false;
-
-            snapshot.docChanges().forEach(change => {
-              const messageData = change.doc.data();
-              const message: ChatMessage = {
-                id: change.doc.id,
-                chatId: chatId,
-                text: messageData.text || '',
-                senderId: messageData.senderId || '',
-                timestamp: messageData.timestamp?.toDate() || new Date(),
-                createdAt: messageData.createdAt?.toDate() || new Date(),
-                read: messageData.read || false,
-                recipientId: messageData.recipientId || ''
-              };
-
-              if (change.type === 'added') {
-                // Check if message already exists
-                const existingIndex = updatedMessages.findIndex(m => m.id === message.id);
-                if (existingIndex === -1) {
-                  updatedMessages.push(message);
-                  hasChanges = true;
-                }
-              } else if (change.type === 'modified') {
-                const index = updatedMessages.findIndex(m => m.id === message.id);
-                if (index !== -1) {
-                  updatedMessages[index] = message;
-                  hasChanges = true;
-                }
-              } else if (change.type === 'removed') {
-                const index = updatedMessages.findIndex(m => m.id === message.id);
-                if (index !== -1) {
-                  updatedMessages.splice(index, 1);
-                  hasChanges = true;
-                }
-              }
+          const newMessages: ChatMessage[] = [];
+          
+          snapshot.forEach((doc) => {
+            const data = doc.data();
+            newMessages.push({
+              id: doc.id,
+              chatId: chatId,
+              text: data.text || '',
+              senderId: data.senderId || '',
+              timestamp: data.timestamp?.toDate() || new Date(),
+              createdAt: data.createdAt?.toDate() || new Date(),
+              read: data.read || false,
+              recipientId: data.recipientId || ''
             });
-
-            if (hasChanges) {
-              // Sort messages by timestamp
-              updatedMessages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-              
-              // Mark messages as read if they're from the other user
-              const batch = writeBatch(db);
-              let hasUnread = false;
-
-              updatedMessages.forEach(msg => {
-                if (!msg.read && msg.senderId !== currentUser.uid) {
-                  hasUnread = true;
-                  const messageRef = doc(db, 'chats', chatId, 'messages', msg.id);
-                  batch.update(messageRef, { read: true });
-                }
-              });
-
-              if (hasUnread) {
-                // Update chat unread count
-                const chatRef = doc(db, 'chats', chatId);
-                batch.update(chatRef, {
-                  [`unreadCount.${currentUser.uid}`]: 0
-                });
-                batch.commit().catch(error => {
-                  console.error('Error marking messages as read:', error);
-                });
-              }
-
-              // Update scroll position
-              if (messagesEndRef.current) {
-                const shouldScroll = 
-                  Math.abs(
-                    messagesEndRef.current.getBoundingClientRect().bottom - 
-                    messagesContainerRef.current?.getBoundingClientRect().bottom!
-                  ) < 100;
-                
-                if (shouldScroll) {
-                  messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-                }
-              }
-
-              return updatedMessages;
-            }
-
-            return prevMessages;
           });
+
+          // Sort messages by timestamp
+          newMessages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+          setMessages(newMessages);
+
+          // Mark messages as read
+          const batch = writeBatch(db);
+          let hasUnread = false;
+
+          newMessages.forEach(msg => {
+            if (!msg.read && msg.senderId !== currentUser.uid) {
+              hasUnread = true;
+              const messageRef = doc(db, 'chats', chatId, 'messages', msg.id);
+              batch.update(messageRef, { read: true });
+            }
+          });
+
+          if (hasUnread) {
+            const chatRef = doc(db, 'chats', chatId);
+            batch.update(chatRef, {
+              [`unreadCount.${currentUser.uid}`]: 0
+            });
+            batch.commit().catch(error => {
+              console.error('Error marking messages as read:', error);
+            });
+          }
+
+          // Scroll to bottom if near bottom
+          if (messagesEndRef.current) {
+            const shouldScroll = 
+              Math.abs(
+                messagesEndRef.current.getBoundingClientRect().bottom - 
+                messagesContainerRef.current?.getBoundingClientRect().bottom!
+              ) < 100;
+            
+            if (shouldScroll) {
+              messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+            }
+          }
 
           setLoading(false);
         } catch (error) {
@@ -412,6 +377,34 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
       }
     };
   }, [chatId, currentUser?.uid]);
+
+  // Clean up typing status on unmount
+  useEffect(() => {
+    return () => {
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      if (chatId && currentUser?.uid) {
+        updateTypingStatus(false);
+      }
+    };
+  }, [chatId, currentUser?.uid, updateTypingStatus]);
+
+  // Render typing indicator
+  const renderTypingIndicator = () => {
+    const typingParticipants = Object.entries(typingUsers)
+      .filter(([userId, isTyping]) => isTyping && userId !== currentUser?.uid)
+      .map(([userId]) => chat?.participantDetails[userId]?.displayName || 'Someone');
+
+    if (typingParticipants.length > 0) {
+      return (
+        <div className="text-sm text-gray-500 italic mb-2 ml-4">
+          {typingParticipants.join(', ')} {typingParticipants.length === 1 ? 'is' : 'are'} typing...
+        </div>
+      );
+    }
+    return null;
+  };
 
   // Virtualizer setup
   const rowVirtualizer = useVirtualizer({
@@ -524,79 +517,58 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
         </div>
       </div>
 
-      {/* Chat messages */}
-      <div 
-        ref={parentRef}
-        className="flex-1 overflow-auto p-4 space-y-4"
-        style={{ 
-          height: 'calc(100vh - 180px)', 
-          position: 'relative'
+      {/* Messages container */}
+      <div
+        ref={messagesContainerRef}
+        className="flex-1 overflow-y-auto p-4"
+        style={{
+          height: 'calc(100vh - 180px)',
         }}
       >
-        <div
-          ref={messagesContainerRef}
-          style={{
-            height: `${rowVirtualizer.getTotalSize()}px`,
-            width: '100%',
-            position: 'relative'
-          }}
-        >
-          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-            const message = messages[virtualRow.index];
-            const isOwnMessage = message.senderId === currentUser.uid;
-            
-            return (
-              <div
-                key={message.id}
-                data-index={virtualRow.index}
-                className={`flex ${isOwnMessage ? 'justify-end' : 'justify-start'}`}
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  transform: `translateY(${virtualRow.start}px)`,
-                }}
-              >
-                <div
-                  className={`max-w-[80%] md:max-w-[70%] rounded-lg px-4 py-2 ${
-                    isOwnMessage
-                      ? 'bg-blue-500 text-white'
-                      : 'bg-gray-100 text-gray-900'
-                  }`}
-                >
-                  <p className="break-words text-sm md:text-base">{message.text}</p>
-                  <p className="text-xs mt-1 opacity-70">
-                    {formatMessageTime(message.timestamp)}
-                  </p>
-                </div>
+        {messages.map((message) => (
+          <div
+            key={message.id}
+            className={`flex ${
+              message.senderId === currentUser?.uid ? 'justify-end' : 'justify-start'
+            } mb-4`}
+          >
+            <div
+              className={`max-w-[70%] rounded-lg p-3 ${
+                message.senderId === currentUser?.uid
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-gray-100 text-gray-900'
+              }`}
+            >
+              <div className="text-sm">{message.text}</div>
+              <div className="text-xs mt-1 opacity-70">
+                {formatMessageTime(message.timestamp)}
               </div>
-            );
-          })}
-        </div>
+            </div>
+          </div>
+        ))}
+        {renderTypingIndicator()}
         <div ref={messagesEndRef} />
       </div>
 
       {/* Chat input */}
-      <div className="p-4 border-t border-gray-200">
-        <form onSubmit={(e) => { e.preventDefault(); handleSendClick(); }} className="flex space-x-4">
+      <div className="p-4 border-t">
+        <div className="flex items-center space-x-2">
           <textarea
             value={newMessage}
             onChange={handleInputChange}
             onKeyPress={handleKeyPress}
             placeholder="Type a message..."
-            className="flex-1 resize-none rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2"
+            className="flex-1 h-10 px-4 py-2 border rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
             rows={1}
-            style={{ minHeight: '40px', maxHeight: '120px' }}
           />
           <button
-            type="submit"
+            onClick={handleSendClick}
             disabled={!newMessage.trim()}
             className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Send
           </button>
-        </form>
+        </div>
       </div>
     </div>
   );

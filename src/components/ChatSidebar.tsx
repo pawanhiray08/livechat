@@ -86,7 +86,7 @@ export default function ChatSidebar({
     overscan: 5,
   });
 
-  const loadChats = useCallback(async () => {
+  useEffect(() => {
     if (!currentUser?.uid) {
       setLoading(false);
       return;
@@ -100,163 +100,88 @@ export default function ChatSidebar({
       const chatsQuery = query(
         collection(db, 'chats'),
         where('participants', 'array-contains', currentUser.uid),
-        orderBy('lastMessageTime', 'desc'),
-        limit(50)
+        orderBy('lastMessageTime', 'desc')
       );
 
-      // Get initial chats
-      const snapshot = await getDocs(chatsQuery);
-      if (snapshot.empty) {
-        setChats([]);
-        setLoading(false);
-        return;
-      }
-
-      const chatsData: Chat[] = [];
-
-      // Process chat documents
-      for (const doc of snapshot.docs) {
+      // Set up real-time listener for chat updates
+      const unsubscribe = onSnapshot(chatsQuery, async (snapshot) => {
         try {
-          const data = doc.data();
+          const chatsData: Chat[] = [];
           
-          // Ensure participant details exist for all participants
-          const participantDetails: { [key: string]: UserData } = {};
-          for (const participantId of data.participants || []) {
-            if (!data.participantDetails?.[participantId]) {
-              // Fetch user details if missing using collection query
-              const userQuery = query(
-                collection(db, 'users'),
-                where('__name__', '==', participantId),
-                limit(1)
-              );
-              const userSnapshot = await getDocs(userQuery);
-              const userData = userSnapshot.docs[0]?.data() as FirestoreUserData;
-              
-              if (userData) {
-                participantDetails[participantId] = {
-                  displayName: userData.displayName || 'Unknown User',
-                  photoURL: userData.photoURL || null,
-                  email: userData.email || null,
-                  lastSeen: userData.lastSeen || null,
-                  online: userData.online || false,
-                };
-              }
-            } else {
-              participantDetails[participantId] = data.participantDetails[participantId];
-            }
-          }
-
-          const chat: Chat = {
-            id: doc.id,
-            participants: data.participants || [],
-            participantDetails,
-            createdAt: data.createdAt?.toDate() || new Date(),
-            lastMessageTime: data.lastMessageTime?.toDate() || null,
-            lastMessage: data.lastMessage ? {
-              text: data.lastMessage.text || '',
-              senderId: data.lastMessage.senderId || '',
-              timestamp: data.lastMessage.timestamp || Timestamp.now(),
-            } : null,
-            typingUsers: data.typingUsers || {},
-          };
-          chatsData.push(chat);
-        } catch (docError) {
-          console.error(`Error processing chat document ${doc.id}:`, docError);
-          // Continue with other documents even if one fails
-          continue;
-        }
-      }
-
-      // Sort chats by last message time
-      chatsData.sort((a, b) => {
-        const timeA = a.lastMessageTime?.getTime() || 0;
-        const timeB = b.lastMessageTime?.getTime() || 0;
-        return timeB - timeA;
-      });
-
-      // Update state with initial data
-      setChats(chatsData);
-      setLoading(false);
-
-      // Set up real-time listener for updates
-      const unsubscribe = onSnapshot(chatsQuery, {
-        next: (snapshot) => {
-          try {
-            const updatedChats = [...chatsData];
+          // Process each chat document
+          for (const doc of snapshot.docs) {
+            const data = doc.data();
             
-            snapshot.docChanges().forEach((change) => {
-              const data = change.doc.data();
-              const chatIndex = updatedChats.findIndex(c => c.id === change.doc.id);
-              
-              const updatedChat: Chat = {
-                id: change.doc.id,
-                participants: data.participants || [],
-                participantDetails: data.participantDetails || {},
-                createdAt: data.createdAt?.toDate() || new Date(),
-                lastMessageTime: data.lastMessageTime?.toDate() || null,
-                lastMessage: data.lastMessage ? {
-                  text: data.lastMessage.text || '',
-                  senderId: data.lastMessage.senderId || '',
-                  timestamp: data.lastMessage.timestamp || Timestamp.now(),
-                } : null,
-                typingUsers: data.typingUsers || {},
-              };
-
-              if (change.type === 'added' && chatIndex === -1) {
-                updatedChats.push(updatedChat);
-              } else if (change.type === 'modified' && chatIndex !== -1) {
-                updatedChats[chatIndex] = updatedChat;
-              } else if (change.type === 'removed' && chatIndex !== -1) {
-                updatedChats.splice(chatIndex, 1);
+            // Ensure participant details exist
+            const participantDetails: { [key: string]: UserData } = {};
+            for (const participantId of data.participants || []) {
+              if (!data.participantDetails?.[participantId]) {
+                // Fetch user details if missing
+                const userQuery = query(
+                  collection(db, 'users'),
+                  where('__name__', '==', participantId),
+                  limit(1)
+                );
+                const userSnapshot = await getDocs(userQuery);
+                const userData = userSnapshot.docs[0]?.data() as FirestoreUserData;
+                
+                if (userData) {
+                  participantDetails[participantId] = {
+                    displayName: userData.displayName || 'Unknown User',
+                    photoURL: userData.photoURL || null,
+                    email: userData.email || null,
+                    lastSeen: userData.lastSeen || null,
+                    online: userData.online || false,
+                  };
+                }
+              } else {
+                participantDetails[participantId] = data.participantDetails[participantId];
               }
-            });
+            }
 
-            // Sort chats by last message time
-            updatedChats.sort((a, b) => {
-              const timeA = a.lastMessageTime?.getTime() || 0;
-              const timeB = b.lastMessageTime?.getTime() || 0;
-              return timeB - timeA;
-            });
-
-            setChats(updatedChats);
-          } catch (error) {
-            console.error('Error processing chat updates:', error);
+            const chat: Chat = {
+              id: doc.id,
+              participants: data.participants || [],
+              participantDetails,
+              createdAt: data.createdAt?.toDate() || new Date(),
+              lastMessageTime: data.lastMessageTime?.toDate() || null,
+              lastMessage: data.lastMessage ? {
+                text: data.lastMessage.text || '',
+                senderId: data.lastMessage.senderId || '',
+                timestamp: data.lastMessage.timestamp || null,
+              } : null,
+              typingUsers: data.typingUsers || {},
+            };
+            chatsData.push(chat);
           }
-        },
-        error: (error) => {
-          console.error('Error in chat subscription:', error);
+
+          // Sort chats by last message time
+          chatsData.sort((a, b) => {
+            const timeA = a.lastMessageTime?.getTime() || 0;
+            const timeB = b.lastMessageTime?.getTime() || 0;
+            return timeB - timeA;
+          });
+
+          setChats(chatsData);
+          setLoading(false);
+        } catch (error) {
+          console.error('Error processing chats:', error);
           setError('Failed to load chats');
+          setLoading(false);
         }
       });
 
-      return unsubscribe;
+      return () => unsubscribe();
     } catch (error) {
-      console.error('Error loading chats:', error);
+      console.error('Error setting up chat subscription:', error);
       setError('Failed to load chats');
       setLoading(false);
     }
   }, [currentUser?.uid]);
 
-  // Initial load
-  useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
-
-    const initializeChats = async () => {
-      unsubscribe = await loadChats();
-    };
-
-    initializeChats();
-
-    return () => {
-      if (unsubscribe) {
-        unsubscribe();
-      }
-    };
-  }, [loadChats]);
-
   const handleRetry = useCallback(() => {
-    loadChats();
-  }, [loadChats]);
+    // Removed loadChats function call
+  }, []);
 
   if (loading) {
     return (
