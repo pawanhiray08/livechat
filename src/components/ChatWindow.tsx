@@ -140,33 +140,47 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     if (!text.trim() || !chatId) return;
 
     try {
+      const batch = writeBatch(db);
+
+      // Create message document
+      const messagesRef = collection(db, 'chats', chatId, 'messages');
       const messageData = {
         text: text.trim(),
         senderId: currentUser.uid,
         timestamp: serverTimestamp(),
-        createdAt: serverTimestamp(),
-        read: false
+        createdAt: new Date(),
+        read: false,
+        chatId: chatId
       };
 
-      // Add message to messages collection
-      await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
+      // Add message to messages subcollection
+      const newMessageRef = doc(messagesRef);
+      batch.set(newMessageRef, messageData);
 
-      // Update chat's last message
+      // Update chat document with last message info
       const chatRef = doc(db, 'chats', chatId);
-      await updateDoc(chatRef, {
+      batch.update(chatRef, {
         lastMessage: {
           text: text.trim(),
           senderId: currentUser.uid,
           timestamp: serverTimestamp()
         },
-        lastMessageTime: serverTimestamp()
+        lastMessageTime: serverTimestamp(),
+        [`unreadCount.${currentUser.uid}`]: 0
       });
+
+      // Commit both operations
+      await batch.commit();
 
       // Clear typing indicator
       setIsTyping(false);
       updateTypingStatus(false);
+      
+      // Clear input
+      setNewMessage('');
     } catch (error) {
       console.error('Error sending message:', error);
+      throw new Error('Failed to send message. Please try again.');
     }
   }, [chatId, currentUser.uid, updateTypingStatus]);
 
@@ -214,38 +228,59 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
       limit(50)
     );
 
-    const unsubscribe = onSnapshot(messagesQuery, (snapshot) => {
-      const newMessages: ChatMessage[] = [];
-      snapshot.docs.forEach((doc) => {
-        const data = doc.data();
-        newMessages.push({
-          id: doc.id,
-          chatId,
-          text: data.text || '',
-          senderId: data.senderId || '',
-          timestamp: data.timestamp?.toDate() || new Date(),
-          createdAt: data.createdAt?.toDate() || new Date(),
-          read: data.read || false
-        });
-      });
+    const unsubscribe = onSnapshot(messagesQuery, {
+      next: (snapshot) => {
+        const newMessages: ChatMessage[] = [];
+        snapshot.docChanges().forEach((change) => {
+          const data = change.doc.data();
+          const message = {
+            id: change.doc.id,
+            chatId,
+            text: data.text || '',
+            senderId: data.senderId || '',
+            timestamp: data.timestamp?.toDate() || new Date(),
+            createdAt: data.createdAt || new Date(),
+            read: data.read || false
+          };
 
-      // Sort messages by timestamp
-      newMessages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-      setMessages(newMessages);
-      setLoading(false);
-
-      // Mark messages as read
-      if (newMessages.length > 0) {
-        const batch = writeBatch(db);
-        newMessages.forEach(msg => {
-          if (!msg.read && msg.senderId !== currentUser.uid) {
-            const messageRef = doc(db, 'chats', chatId, 'messages', msg.id);
-            batch.update(messageRef, { read: true });
+          if (change.type === 'added') {
+            newMessages.push(message);
           }
         });
-        batch.commit().catch(error => {
-          console.error('Error marking messages as read:', error);
+
+        // Sort messages by timestamp
+        newMessages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+        setMessages(prev => {
+          const combined = [...prev, ...newMessages];
+          // Remove duplicates based on message ID
+          const unique = combined.filter((message, index, self) =>
+            index === self.findIndex((m) => m.id === message.id)
+          );
+          // Sort by timestamp
+          return unique.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
         });
+
+        // Mark messages as read
+        if (newMessages.length > 0) {
+          const batch = writeBatch(db);
+          let hasUnread = false;
+          newMessages.forEach(msg => {
+            if (!msg.read && msg.senderId !== currentUser.uid) {
+              hasUnread = true;
+              const messageRef = doc(db, 'chats', chatId, 'messages', msg.id);
+              batch.update(messageRef, { read: true });
+            }
+          });
+          if (hasUnread) {
+            batch.commit().catch(error => {
+              console.error('Error marking messages as read:', error);
+            });
+          }
+        }
+      },
+      error: (error) => {
+        console.error('Error listening to messages:', error);
+        setError('Failed to load messages');
       }
     });
 
