@@ -123,9 +123,14 @@ export default function ChatSidebar({
           const participantDetails: { [key: string]: UserData } = {};
           for (const participantId of data.participants || []) {
             if (!data.participantDetails?.[participantId]) {
-              // Fetch user details if missing
-              const userDoc = await getDoc(doc(db, 'users', participantId));
-              const userData = userDoc.data() as FirestoreUserData;
+              // Fetch user details if missing using collection query
+              const userQuery = query(
+                collection(db, 'users'),
+                where('__name__', '==', participantId),
+                limit(1)
+              );
+              const userSnapshot = await getDocs(userQuery);
+              const userData = userSnapshot.docs[0]?.data() as FirestoreUserData;
               
               if (userData) {
                 participantDetails[participantId] = {
