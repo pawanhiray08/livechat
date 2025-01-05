@@ -80,131 +80,91 @@ const TYPING_TIMER_LENGTH = 3000;
 export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowProps) {
   // State
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [chat, setChat] = useState<Chat | null>(null);
+  const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [newMessage, setNewMessage] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
-  const [typingUsers, setTypingUsers] = useState<{[key: string]: boolean}>({});
-
-  // Refs
-  const lastTypingTime = useRef<number>(0);
+  const [chat, setChat] = useState<Chat | null>(null);
+  const [typingTimeout, setTypingTimeout] = useState<NodeJS.Timeout | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const parentRef = useRef<HTMLDivElement>(null);
-  const presenceIntervalRef = useRef<NodeJS.Timeout>();
   const messagesContainerRef = useRef<HTMLDivElement>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout>();
 
   // Derived state
   const otherParticipantId = chat?.participants?.find(id => id !== currentUser.uid) || '';
 
   // Utility functions
   const scrollToBottom = useCallback(() => {
-    if (parentRef.current) {
+    const messageEnd = messagesEndRef.current;
+    if (messageEnd) {
       requestAnimationFrame(() => {
-        parentRef.current?.scrollTo({
-          top: parentRef.current.scrollHeight,
-          behavior: 'smooth'
-        });
+        messageEnd.scrollIntoView({ behavior: 'smooth' });
       });
     }
   }, []);
 
   const updateTypingStatus = useCallback(async (isTyping: boolean) => {
-    if (!currentUser?.uid || !chatId || !chat) return;
+    if (!chatId || !currentUser?.uid) return;
     
-    const chatRef = doc(db, 'chats', chatId);
     try {
+      const chatRef = doc(db, 'chats', chatId);
       await updateDoc(chatRef, {
         [`typingUsers.${currentUser.uid}`]: isTyping
       });
     } catch (error) {
       console.error('Error updating typing status:', error);
     }
-  }, [chatId, currentUser?.uid, chat]);
+  }, [chatId, currentUser?.uid]);
 
   const handleTyping = useCallback(() => {
-    if (!isTyping) {
-      setIsTyping(true);
-      updateTypingStatus(true);
+    if (typingTimeout) {
+      clearTimeout(typingTimeout);
     }
 
-    // Clear existing timeout
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
+    updateTypingStatus(true);
 
-    // Set new timeout
-    typingTimeoutRef.current = setTimeout(() => {
-      setIsTyping(false);
+    const timeout = setTimeout(() => {
       updateTypingStatus(false);
     }, TYPING_TIMER_LENGTH);
-  }, [isTyping, updateTypingStatus]);
 
-  const sendMessage = useCallback(async (messageText: string) => {
-    if (!messageText.trim() || !chatId || !chat) return;
+    setTypingTimeout(timeout);
+  }, [typingTimeout, updateTypingStatus]);
+
+  const sendMessage = useCallback(async (text: string) => {
+    if (!chatId || !currentUser?.uid || !text.trim()) return;
 
     try {
-      const batch = writeBatch(db);
-      
-      // Get the other participant's ID
-      const otherParticipantId = chat.participants.find(id => id !== currentUser.uid);
-      if (!otherParticipantId) {
-        throw new Error('No other participant found in chat');
-      }
-
       const timestamp = serverTimestamp();
-
-      // Create message document
       const messageData = {
-        text: messageText,
+        text: text.trim(),
         senderId: currentUser.uid,
         timestamp,
-        createdAt: new Date(),
+        createdAt: timestamp,
         read: false,
-        chatId: chatId,
         recipientId: otherParticipantId
       };
 
       // Add message to messages subcollection
-      const messagesRef = collection(db, 'chats', chatId, 'messages');
-      const newMessageRef = doc(messagesRef);
-      batch.set(newMessageRef, messageData);
+      const messageRef = doc(collection(db, 'chats', chatId, 'messages'));
+      await setDoc(messageRef, messageData);
 
-      // Update chat document with last message info and unread counts
+      // Update chat document with last message info
       const chatRef = doc(db, 'chats', chatId);
-      const updates = {
+      await updateDoc(chatRef, {
         lastMessage: {
-          text: messageText,
+          text: text.trim(),
           senderId: currentUser.uid,
           timestamp
         },
         lastMessageTime: timestamp,
-        [`unreadCount.${otherParticipantId}`]: increment(1),
-        [`unreadCount.${currentUser.uid}`]: 0,
-        updatedAt: timestamp,
-        participants: chat.participants // Ensure participants array is included
-      };
+        [`unreadCount.${otherParticipantId}`]: increment(1)
+      });
 
-      batch.update(chatRef, updates);
-
-      // Commit both operations
-      await batch.commit();
-
-      // Clear typing indicator and input
-      setIsTyping(false);
-      updateTypingStatus(false);
       setNewMessage('');
-
-      // Force scroll to bottom
-      if (messagesEndRef.current) {
-        messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-      }
+      scrollToBottom();
     } catch (error) {
       console.error('Error sending message:', error);
-      throw new Error('Failed to send message. Please try again.');
+      setError('Failed to send message. Please try again.');
     }
-  }, [chatId, currentUser?.uid, updateTypingStatus, chat]);
+  }, [chatId, currentUser?.uid, otherParticipantId, scrollToBottom]);
 
   const handleKeyPress = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -323,7 +283,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
   }, [chatId, currentUser?.uid]);
 
   useEffect(() => {
-    if (!chatId) return;
+    if (!chatId || !currentUser?.uid) return;
 
     const chatRef = doc(db, 'chats', chatId);
     
@@ -344,7 +304,6 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
           typingUsers: data.typingUsers || {},
           unreadCount: data.unreadCount || {}
         });
-        setTypingUsers(data.typingUsers || {});
         setLoading(false);
       } else {
         setError('Chat not found');
@@ -353,7 +312,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
     });
 
     return () => unsubscribe();
-  }, [chatId]);
+  }, [chatId, currentUser?.uid, updateTypingStatus]);
 
   // Presence update effect
   useEffect(() => {
@@ -373,12 +332,9 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
 
     updatePresence();
     const interval = setInterval(updatePresence, 60000);
-    presenceIntervalRef.current = interval;
 
     return () => {
-      if (presenceIntervalRef.current) {
-        clearInterval(presenceIntervalRef.current);
-      }
+      clearInterval(interval);
     };
   }, [chatId, currentUser?.uid, chat]);
 
@@ -399,8 +355,8 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
   // Clean up typing status on unmount
   useEffect(() => {
     return () => {
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
+      if (typingTimeout) {
+        clearTimeout(typingTimeout);
       }
       if (chatId && currentUser?.uid) {
         updateTypingStatus(false);
@@ -410,16 +366,15 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
 
   // Render typing indicator
   const renderTypingIndicator = () => {
-    const typingParticipants = Object.entries(typingUsers)
-      .filter(([userId, isTyping]) => isTyping && userId !== currentUser?.uid)
-      .map(([userId]) => chat?.participantDetails[userId]?.displayName || 'Someone');
-
-    if (typingParticipants.length > 0) {
-      return (
-        <div className="text-sm text-gray-500 italic mb-2 ml-4">
-          {typingParticipants.join(', ')} {typingParticipants.length === 1 ? 'is' : 'are'} typing...
-        </div>
-      );
+    if (chat && Object.entries(chat.typingUsers).some(([userId, isTyping]) => isTyping && userId !== currentUser?.uid)) {
+      const typingUser = Object.entries(chat.typingUsers).find(([userId, isTyping]) => isTyping && userId !== currentUser?.uid);
+      if (typingUser) {
+        return (
+          <div className="text-sm text-gray-500 italic mb-2 ml-4">
+            {chat.participantDetails[typingUser[0]]?.displayName || 'Someone'} is typing...
+          </div>
+        );
+      }
     }
     return null;
   };
@@ -427,7 +382,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
   // Virtualizer setup
   const rowVirtualizer = useVirtualizer({
     count: messages.length,
-    getScrollElement: () => parentRef.current,
+    getScrollElement: () => messagesContainerRef.current,
     estimateSize: () => 60,
     overscan: 5,
   });
@@ -508,7 +463,7 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
   }
 
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div className="flex flex-col h-full bg-white rounded-lg shadow-lg">
       {/* Chat header */}
       <div className="p-4 border-b border-gray-200">
         <div className="flex items-center space-x-4">
@@ -545,12 +500,9 @@ export default function ChatWindow({ chatId, currentUser, onBack }: ChatWindowPr
       </div>
 
       {/* Messages container */}
-      <div
+      <div 
         ref={messagesContainerRef}
-        className="flex-1 overflow-y-auto p-4"
-        style={{
-          height: 'calc(100vh - 180px)',
-        }}
+        className="flex-1 overflow-y-auto p-4 space-y-4"
       >
         {messages.map((message) => (
           <div

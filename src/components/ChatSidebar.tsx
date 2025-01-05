@@ -18,7 +18,8 @@ import {
   serverTimestamp,
   DocumentReference,
   DocumentData,
-  QueryDocumentSnapshot,
+  DocumentSnapshot,
+  startAfter,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import UserAvatar from './UserAvatar';
@@ -66,6 +67,8 @@ interface Chat {
   typingUsers: { [key: string]: boolean };
 }
 
+const CHATS_PER_PAGE = 10;
+
 export default function ChatSidebar({
   currentUser,
   selectedChatId,
@@ -75,150 +78,140 @@ export default function ChatSidebar({
   onShowUsers,
 }: ChatSidebarProps) {
   const [chats, setChats] = useState<Chat[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const parentRef = useRef<HTMLDivElement>(null);
+  const [lastChat, setLastChat] = useState<DocumentSnapshot | null>(null);
+  const [hasMore, setHasMore] = useState(true);
+
+  const loadChats = useCallback(async (isInitial: boolean = false) => {
+    if (!currentUser?.uid || (!isInitial && !hasMore)) return;
+
+    try {
+      let q = query(
+        collection(db, 'chats'),
+        where('participants', 'array-contains', currentUser.uid),
+        orderBy('lastMessageTime', 'desc'),
+        limit(CHATS_PER_PAGE)
+      );
+
+      if (!isInitial && lastChat) {
+        q = query(
+          collection(db, 'chats'),
+          where('participants', 'array-contains', currentUser.uid),
+          orderBy('lastMessageTime', 'desc'),
+          startAfter(lastChat),
+          limit(CHATS_PER_PAGE)
+        );
+      }
+
+      const snapshot = await getDocs(q);
+      const newChats = await Promise.all(
+        snapshot.docs.map(async (doc) => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            participants: data.participants || [],
+            participantDetails: data.participantDetails || {},
+            createdAt: data.createdAt?.toDate() || new Date(),
+            lastMessageTime: data.lastMessageTime?.toDate() || null,
+            lastMessage: data.lastMessage || null,
+            typingUsers: data.typingUsers || {}
+          };
+        })
+      );
+
+      if (isInitial) {
+        setChats(newChats);
+      } else {
+        setChats(prev => [...prev, ...newChats]);
+      }
+
+      setLastChat(snapshot.docs[snapshot.docs.length - 1] || null);
+      setHasMore(snapshot.docs.length === CHATS_PER_PAGE);
+      setError(null);
+    } catch (err) {
+      console.error('Error loading chats:', err);
+      setError('Failed to load chats. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }, [currentUser?.uid, hasMore, lastChat]);
+
+  // Initial load
+  useEffect(() => {
+    loadChats(true);
+  }, [loadChats]);
+
+  // Real-time updates for existing chats
+  useEffect(() => {
+    if (!currentUser?.uid) return;
+
+    const q = query(
+      collection(db, 'chats'),
+      where('participants', 'array-contains', currentUser.uid),
+      orderBy('lastMessageTime', 'desc'),
+      limit(CHATS_PER_PAGE)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'modified' || change.type === 'added') {
+          const data = change.doc.data();
+          const updatedChat: Chat = {
+            id: change.doc.id,
+            participants: data.participants || [],
+            participantDetails: data.participantDetails || {},
+            createdAt: data.createdAt?.toDate() || new Date(),
+            lastMessageTime: data.lastMessageTime?.toDate() || null,
+            lastMessage: data.lastMessage || null,
+            typingUsers: data.typingUsers || {}
+          };
+
+          setChats(prev => {
+            const index = prev.findIndex(chat => chat.id === updatedChat.id);
+            if (index === -1) {
+              return [updatedChat, ...prev];
+            }
+            const newChats = [...prev];
+            newChats[index] = updatedChat;
+            return newChats.sort((a, b) => 
+              (b.lastMessageTime?.getTime() || 0) - (a.lastMessageTime?.getTime() || 0)
+            );
+          });
+        }
+      });
+    });
+
+    return () => unsubscribe();
+  }, [currentUser?.uid]);
 
   const rowVirtualizer = useVirtualizer({
     count: chats.length,
-    getScrollElement: () => parentRef.current,
+    getScrollElement: () => null,
     estimateSize: useCallback(() => 80, []),
     overscan: 5,
   });
 
+  const parentRef = useRef<HTMLDivElement>(null);
+  const chatListRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    if (!currentUser?.uid) {
-      setLoading(false);
-      return;
-    }
+    const container = chatListRef.current;
+    if (!container) return;
 
-    setLoading(true);
-    setError(null);
+    const handleScroll = () => {
+      if (
+        container.scrollHeight - container.scrollTop <= container.clientHeight * 1.5 &&
+        !loading &&
+        hasMore
+      ) {
+        loadChats();
+      }
+    };
 
-    try {
-      // Create a query for chats with a limit
-      const chatsQuery = query(
-        collection(db, 'chats'),
-        where('participants', 'array-contains', currentUser.uid),
-        orderBy('updatedAt', 'desc'), // Use updatedAt for proper ordering
-        limit(20)
-      );
-
-      // Set up real-time listener for chat updates
-      const unsubscribe = onSnapshot(chatsQuery, {
-        next: async (snapshot) => {
-          try {
-            const chatsData: Chat[] = [];
-            const userDetailsCache: { [key: string]: UserData } = {};
-            
-            // Process each chat document
-            for (const doc of snapshot.docs) {
-              const data = doc.data();
-              
-              // Skip invalid chats
-              if (!data.participants || !Array.isArray(data.participants)) {
-                console.error('Invalid chat document:', doc.id);
-                continue;
-              }
-
-              // Ensure participant details exist
-              const participantDetails: { [key: string]: UserData } = {};
-              for (const participantId of data.participants) {
-                // First check the cache
-                if (userDetailsCache[participantId]) {
-                  participantDetails[participantId] = userDetailsCache[participantId];
-                  continue;
-                }
-
-                // Then check existing details
-                if (data.participantDetails?.[participantId]) {
-                  participantDetails[participantId] = data.participantDetails[participantId];
-                  userDetailsCache[participantId] = data.participantDetails[participantId];
-                  continue;
-                }
-
-                // Finally, fetch if not found
-                try {
-                  const userQuery = query(
-                    collection(db, 'users'),
-                    where('__name__', '==', participantId),
-                    limit(1)
-                  );
-                  const userSnapshot = await getDocs(userQuery);
-                  const userData = userSnapshot.docs[0]?.data() as FirestoreUserData;
-                  
-                  if (userData) {
-                    const userDetails = {
-                      displayName: userData.displayName || 'Unknown User',
-                      photoURL: userData.photoURL || null,
-                      email: userData.email || null,
-                      lastSeen: userData.lastSeen || null,
-                      online: userData.online || false,
-                    };
-                    participantDetails[participantId] = userDetails;
-                    userDetailsCache[participantId] = userDetails;
-                  }
-                } catch (userError) {
-                  console.error(`Error fetching user ${participantId}:`, userError);
-                  participantDetails[participantId] = {
-                    displayName: 'Unknown User',
-                    photoURL: null,
-                    email: null,
-                    lastSeen: null,
-                    online: false,
-                  };
-                }
-              }
-
-              const chat: Chat = {
-                id: doc.id,
-                participants: data.participants,
-                participantDetails,
-                createdAt: data.createdAt?.toDate() || new Date(),
-                lastMessageTime: data.lastMessageTime?.toDate() || null,
-                lastMessage: data.lastMessage ? {
-                  text: data.lastMessage.text || '',
-                  senderId: data.lastMessage.senderId || '',
-                  timestamp: data.lastMessage.timestamp || null,
-                } : null,
-                typingUsers: data.typingUsers || {},
-              };
-              chatsData.push(chat);
-            }
-
-            // Sort chats by last message time or updatedAt
-            chatsData.sort((a, b) => {
-              const timeA = a.lastMessageTime?.getTime() || 0;
-              const timeB = b.lastMessageTime?.getTime() || 0;
-              return timeB - timeA;
-            });
-
-            setChats(chatsData);
-            setLoading(false);
-          } catch (error) {
-            console.error('Error processing chats:', error);
-            setError('Failed to load chats');
-            setLoading(false);
-          }
-        },
-        error: (error) => {
-          console.error('Error in chat subscription:', error);
-          setError('Failed to load chats');
-          setLoading(false);
-        }
-      });
-
-      return () => unsubscribe();
-    } catch (error) {
-      console.error('Error setting up chat subscription:', error);
-      setError('Failed to load chats');
-      setLoading(false);
-    }
-  }, [currentUser?.uid]);
-
-  const handleRetry = useCallback(() => {
-    // Removed loadChats function call
-  }, []);
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [loading, hasMore, loadChats]);
 
   if (loading) {
     return (
@@ -255,7 +248,7 @@ export default function ChatSidebar({
           <div className="text-center">
             <p className="text-gray-500 mb-4">{error}</p>
             <button
-              onClick={handleRetry}
+              onClick={() => loadChats()}
               className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
             >
               Retry
@@ -354,65 +347,76 @@ export default function ChatSidebar({
       </div>
 
       <div
-        ref={parentRef}
-        className="flex-1 overflow-auto"
+        ref={chatListRef}
+        className="flex-1 overflow-y-auto"
       >
-        <div
-          style={{
-            height: `${rowVirtualizer.getTotalSize()}px`,
-            width: '100%',
-            position: 'relative',
-          }}
-        >
-          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-            const chat = chats[virtualRow.index];
-            if (!chat) return null;
-            
-            const otherParticipantId = chat.participants?.find(id => id !== currentUser.uid);
-            const otherParticipant = otherParticipantId ? chat.participantDetails[otherParticipantId] : null;
-            const isSelected = chat.id === selectedChatId;
+        {loading && (
+          <div className="p-4 text-center">
+            <div className="inline-block animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-blue-500" />
+          </div>
+        )}
+        {!loading && (
+          <>
+            {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+              const chat = chats[virtualRow.index];
+              if (!chat) return null;
+              
+              const otherParticipantId = chat.participants?.find(id => id !== currentUser.uid);
+              const otherParticipant = otherParticipantId ? chat.participantDetails[otherParticipantId] : null;
+              const isSelected = chat.id === selectedChatId;
 
-            return (
-              <div
-                key={chat.id}
-                ref={rowVirtualizer.measureElement}
-                data-index={virtualRow.index}
-                className={`absolute top-0 left-0 w-full ${
-                  isSelected ? 'bg-blue-50' : 'hover:bg-gray-50'
-                } cursor-pointer`}
-                style={{
-                  height: `${virtualRow.size}px`,
-                  transform: `translateY(${virtualRow.start}px)`,
-                }}
-                onClick={() => onChatSelect(chat.id)}
-              >
-                <div className="p-4 flex items-center space-x-4">
-                  <UserAvatar
-                    user={{
-                      photoURL: otherParticipant?.photoURL || null,
-                      displayName: otherParticipant?.displayName || null
-                    }}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-medium text-gray-900 truncate">
-                        {otherParticipant?.displayName || 'Anonymous User'}
-                      </h3>
-                      {chat.lastMessageTime && (
-                        <span className="text-xs text-gray-500">
-                          {formatLastSeen(chat.lastMessageTime)}
-                        </span>
-                      )}
+              return (
+                <div
+                  key={chat.id}
+                  ref={rowVirtualizer.measureElement}
+                  data-index={virtualRow.index}
+                  className={`absolute top-0 left-0 w-full ${
+                    isSelected ? 'bg-blue-50' : 'hover:bg-gray-50'
+                  } cursor-pointer`}
+                  style={{
+                    height: `${virtualRow.size}px`,
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                  onClick={() => onChatSelect(chat.id)}
+                >
+                  <div className="p-4 flex items-center space-x-4">
+                    <UserAvatar
+                      user={{
+                        photoURL: otherParticipant?.photoURL || null,
+                        displayName: otherParticipant?.displayName || null
+                      }}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-medium text-gray-900 truncate">
+                          {otherParticipant?.displayName || 'Anonymous User'}
+                        </h3>
+                        {chat.lastMessageTime && (
+                          <span className="text-xs text-gray-500">
+                            {formatLastSeen(chat.lastMessageTime)}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-500 truncate">
+                        {chat.lastMessage?.text || 'No messages yet'}
+                      </p>
                     </div>
-                    <p className="text-sm text-gray-500 truncate">
-                      {chat.lastMessage?.text || 'No messages yet'}
-                    </p>
                   </div>
                 </div>
+              );
+            })}
+            {!loading && !hasMore && chats.length > 0 && (
+              <div className="p-4 text-center text-gray-500">
+                No more chats to load
               </div>
-            );
-          })}
-        </div>
+            )}
+            {!loading && chats.length === 0 && (
+              <div className="p-4 text-center text-gray-500">
+                No chats found
+              </div>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
